@@ -94,6 +94,45 @@ Every service runs with `cpus`, `mem_limit` (= `memswap_limit`, so no swap),
 `pids_limit`, `shm_size`, `no-new-privileges` and `cap_drop: NET_RAW` — the same
 hardening idiom as the LTSpice deployment. Caps come from `.env`.
 
+## Slow machines / low RTF
+
+**RTF (real-time factor)** = sim time ÷ wall time. RTF 1.0 = real speed;
+RTF 0.04 = 1 sim-second takes 25 wall-seconds. Weak machines and dense
+[WildSeed worlds](wildseed-worlds.md) both push it down. Read it any time:
+
+```bash
+./scripts/deploy.sh rtf        # measured RTF + tier hint (sim must be up ~1 min)
+./scripts/deploy.sh logs husky | grep rtf_probe    # auto-logged after bring-up
+```
+
+**The sim-seconds contract.** Everything *inside* the ROS graph runs on sim
+time and scales gracefully. The demos and smoke gates (`m3-smoke`,
+`gps_denied_demo.py`, `m3_vio_demo.py`, the N1 demo) define **all durations in
+SIM seconds** and self-report the measured RTF: at RTF 0.1 a "40 s" demo takes
+~400 wall-seconds but drives the identical path and records the identical
+physics. They abort with a clear message if RTF < `SIM_RTF_FLOOR` (`.env`,
+default 0.02 — below that the sim isn't meaningfully interactive).
+
+**What does NOT scale by itself** is the wall-clock *control plane*: the
+ros2_control spawner handshake, service calls, bring-up backstops. Those
+budgets multiply by **`SLOW_SIM_FACTOR`** (`.env`, default 1):
+
+| Symptom | Fix |
+|---|---|
+| `[rtf_probe] WARN: RTF < 0.1` at bring-up | raise `SLOW_SIM_FACTOR` to 2–5, `deploy.sh restart` |
+| `Failed to activate controller …` / watchdog "recovering" loops | same — the spawner's wall-clock handshake starves ([wildseed-worlds.md](wildseed-worlds.md) RTF wall) |
+| demos abort at the RTF floor | lighten the world (density — see below) or free CPUs |
+
+**Tuning ladder** (measured evidence: `scripts/bench_rtf.sh`, results in
+[wildseed-worlds.md](wildseed-worlds.md)):
+1. **World density** — include count is the dense-world bottleneck
+   (physics-step-bound): regenerate with `wildseed scenario --density-scale 0.5`.
+2. **Physics step** — `scripts/tune_world_bundle.sh <bundle> --step 0.002`
+   (prepare's default for new bundles); forest RTF scaled ~linearly with step.
+3. **CPUs** — `deploy.sh set --cpus N && deploy.sh restart` (gz is CPU-hungry).
+4. Shadows/sky off (`tune_world_bundle.sh --no-shadows --no-sky`) measured as
+   **no-ops** on RTX 2070-class GPUs — try them only on much weaker GPUs.
+
 ## Datasets (later milestones)
 
 `DATASETS_DIR` (default `../datasets`, gitignored) is mounted read-write into

@@ -13,6 +13,10 @@
 #   <world-file>     the generated .world/.sdf (absolute or relative to cwd)
 #   [bundle-name]    output name (default: world file stem)
 #   --spawn          robot spawn x,y[,yaw] in world metres (default 0,0,0)
+#   --step S         physics max_step_size (default 0.002 — see below)
+#   --keep-labels / --no-shadows / --no-sky   forwarded to the RTF tuner
+#                    (tune_world_bundle.sh; labels are stripped by default,
+#                    shadows/sky kept — those measured as RTF no-ops)
 #
 # Produces worlds_external/<bundle-name>/
 #   world.sdf    copy of the world, world-shell injected (--shell-only):
@@ -38,13 +42,23 @@ WILDSEED="$(cd "$1" && pwd)"; shift
 WORLD_FILE="$(readlink -f "$1")"; shift
 BUNDLE=""
 SPAWN_XY="0,0"
+TUNE_ARGS=()
+STEP_SET=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --spawn) SPAWN_XY="$2"; shift 2 ;;
+    # forwarded to tune_world_bundle.sh (RTF tuning runs by default)
+    --keep-labels|--no-shadows|--no-sky) TUNE_ARGS+=("$1"); shift ;;
+    --step) TUNE_ARGS+=("$1" "$2"); STEP_SET=1; shift 2 ;;
     -h|--help) usage ;;
     *) [ -z "$BUNDLE" ] && BUNDLE="$1" && shift || usage ;;
   esac
 done
+# Default physics step 2 ms: dense WildSeed worlds are PHYSICS-STEP-bound
+# (bench_rtf.sh: forest RTF 0.034 @1ms -> 0.149 @4ms, linear). 2 ms doubles
+# dense-world RTF while staying conservative for wheel contacts (gated by
+# deploy.sh m3-smoke). Pass an explicit `--step 0.001` to keep gz's default.
+[ "$STEP_SET" = 1 ] || TUNE_ARGS+=(--step 0.002)
 [ -f "$WORLD_FILE" ] || { echo "world file not found: $WORLD_FILE" >&2; exit 1; }
 [ -d "$WILDSEED/src/wildseed" ] || { echo "not a WildSeed checkout: $WILDSEED" >&2; exit 1; }
 [ -d "$WILDSEED/models/ground" ] || { echo "no models/ground in $WILDSEED — generate the world first" >&2; exit 1; }
@@ -87,9 +101,21 @@ if dropped:
     tree.write(sys.argv[1], encoding="utf-8", xml_declaration=True)
     print(f"   stripped {dropped} sensor_rig include(s)")
 PY
+# --no-labels: nothing in the Husky stack consumes segmentation labels (no
+# segmentation camera in robot.yaml), so don't inject one Label system per
+# include. Falls back to labelled injection on WildSeed checkouts older than
+# the flag; the tuner below strips labels in that case.
 PYTHONPATH="$WILDSEED/src" python3 -m wildseed rig \
+    --inject "$BDIR/world.sdf" --shell-only --no-labels --models "$BDIR/models" >/dev/null \
+  || PYTHONPATH="$WILDSEED/src" python3 -m wildseed rig \
     --inject "$BDIR/world.sdf" --shell-only --models "$BDIR/models" >/dev/null
-echo "   world.sdf shell-injected (sensor systems + spherical_coordinates, no rig)"
+echo "   world.sdf shell-injected (sensor systems + spherical_coordinates, no rig, no labels)"
+
+# 2b. RTF tuning (shadows/sky/labels off — evidence: scripts/bench_rtf.sh).
+#     Opt out per-item with --keep-shadows/--keep-sky/--keep-labels; opt into a
+#     larger physics step with --step S. Idempotent; re-run any time via
+#     scripts/tune_world_bundle.sh (also how PRE-EXISTING bundles migrate).
+"$ROOT/scripts/tune_world_bundle.sh" "$BDIR/world.sdf" ${TUNE_ARGS[@]+"${TUNE_ARGS[@]}"}
 
 # 3. spawn z from the bundle's own terrain mesh + wheel clearance
 HJSON="$(PYTHONPATH="$WILDSEED/src" python3 -m wildseed height \

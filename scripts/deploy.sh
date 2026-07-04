@@ -21,6 +21,7 @@
 #   ./deploy.sh world <bundle>|default  select the sim world (a prepared
 #                                    worlds_external/ bundle, or the pipeline
 #                                    default) — then 'restart' to apply
+#   ./deploy.sh rtf                  measured sim real-time factor + tier hint
 #   ./deploy.sh restart [role]       down + up
 set -euo pipefail
 
@@ -89,6 +90,9 @@ cmd_up() {
   # shellcheck disable=SC2046
   dc $(role_to_profiles "$role") up -d
   echo "up [$role]. 'deploy.sh logs' to watch, 'deploy.sh down' to stop."
+  case "$role" in all|compute)
+    echo "   (sim speed: './scripts/deploy.sh rtf' after ~1 min — the launch also logs an [rtf_probe] line)" ;;
+  esac
 }
 
 cmd_down() { need_env; dc --profile compute --profile gui --profile smoke --profile render --profile teleop --profile vio down ; }
@@ -190,13 +194,28 @@ cmd_world() { # select the world the husky sim loads (see prepare_wildseed_world
   esac
 }
 
+cmd_rtf() { # measured sim real-time factor + a tier hint (needs the sim up)
+  need_env
+  local w rtf
+  w="$(getenv SIM_WORLD_NAME pipeline)"
+  rtf=$(dc --profile compute exec -T husky bash -lc \
+    "source /opt/ros/jazzy/setup.bash; gz topic -e -n 5 -t /world/$w/stats 2>/dev/null | grep -oE 'real_time_factor: [0-9.eE+-]+' | awk '{s+=\$2;c++} END {if (c) printf \"%.3f\", s/c}'" 2>/dev/null)
+  [ -n "$rtf" ] || { echo "RTF: unavailable — is the sim up and past bring-up? (deploy.sh up compute, wait ~1 min)"; return 1; }
+  echo "RTF ≈ $rtf  (world '$w')"
+  awk -v r="$rtf" 'BEGIN{
+    if (r >= 0.5)      print "   fine — near real time";
+    else if (r >= 0.1) print "   slow but workable — demos take ~1/RTF longer in wall time (their windows are SIM seconds)";
+    else               print "   WARN: RTF < 0.1 — controller activation may starve; set SLOW_SIM_FACTOR in .env and see docs/operations.md (Slow machines / low RTF)";
+  }'
+}
+
 cmd_m3smoke() {
   need_env
   echo "── M3 stereo-VIO smoke gate (cameras render+track, stereo synced, OpenVINS live) ──"
   dc --profile compute --profile vio up -d            # idempotent
   echo "waiting for the stereo cameras + OpenVINS to come up..."
   local i n
-  for i in $(seq 1 40); do
+  for i in $(seq 1 80); do
     n=$(dc exec -T fusion bash -lc 'source /opt/ros/jazzy/setup.bash; ros2 topic list 2>/dev/null | grep -c "camera_[01]/color/image$"' 2>/dev/null | tr -d "[:space:]")
     [ "${n:-0}" -ge 2 ] && break
     sleep 3
@@ -224,8 +243,9 @@ case "${1:-}" in
   shell)   shift; cmd_shell "$@" ;;
   set)     shift; cmd_set "$@" ;;
   world)   shift; cmd_world "$@" ;;
+  rtf)     shift; cmd_rtf "$@" ;;
   restart) shift; cmd_restart "$@" ;;
   ""|-h|--help|help)
-    sed -n '2,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
+    sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
   *) echo "unknown command '$1' (try: deploy.sh help)" >&2; exit 2 ;;
 esac

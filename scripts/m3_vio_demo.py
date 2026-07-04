@@ -15,6 +15,10 @@ Needs up: husky sim, OpenVINS (run_subscribe_msckf), the dynamic_pose bridge, an
 ego_localizer in the visual config (launch/ego_localizer_visual.launch.py).
 
 Usage: m3_vio_demo.py <out_prefix> [v] [wz] [secs]
+
+All durations (secs, the jerk-start, the CSV `t` column) are SIM seconds — at low
+RTF the demo takes proportionally longer in wall time but the drive path, accel
+transients, and recorded physics are identical. Measured RTF printed at start.
 """
 import math
 import os
@@ -31,6 +35,59 @@ NS = "/a200_0000"
 # gz world name: 'pipeline' or, for external bundles, whatever `deploy.sh
 # world` wrote to SIM_WORLD_NAME (the gtbridge topic is derived from it).
 WORLD = os.environ.get("SIM_WORLD_NAME", "pipeline")
+
+# ── sim-time helpers ─────────────────────────────────────────────────────────
+# DUPLICATED in: scripts/m3_vio_demo.py, scripts/gps_denied_demo.py,
+# scripts/n1_drive.py, ros2_ws/src/sensing_bringup/scripts/m3_smoke.py
+# (three different container delivery paths — no shared import; keep in sync).
+#
+# All experiment durations are SIM seconds: at low RTF the run takes longer on
+# the wall clock but the physics (drive distance, drift windows, jerk
+# transients) is identical. Wall-clock ceilings only catch a wedged sim.
+RTF_FLOOR = float(os.environ.get("SIM_RTF_FLOOR", "0.02"))
+
+
+def sim_now(n):
+    return n.get_clock().now().nanoseconds * 1e-9
+
+
+def wait_for_clock(n, wall_ceiling=120.0):
+    t0 = time.time()
+    while rclpy.ok() and n.get_clock().now().nanoseconds == 0:
+        if time.time() - t0 > wall_ceiling:
+            raise SystemExit(f"FAIL: no /clock after {wall_ceiling:.0f}s wall — sim up? "
+                             "clock_bridge alive? (docs/sim-debugging-notes.md #7)")
+        rclpy.spin_once(n, timeout_sec=0.1)
+
+
+def measure_rtf(n, sample_wall_s=3.0):
+    s0, w0 = sim_now(n), time.time()
+    while time.time() - w0 < sample_wall_s:
+        rclpy.spin_once(n, timeout_sec=0.05)
+    rtf = max((sim_now(n) - s0) / (time.time() - w0), 1e-4)
+    note = (f"  (SLOW SIM: durations are SIM seconds; wall time stretches ~{1 / rtf:.0f}x)"
+            if rtf < 0.5 else "")
+    print(f"[simtime] RTF≈{rtf:.3f}{note}", flush=True)
+    if rtf < RTF_FLOOR:
+        raise SystemExit(f"FAIL: RTF {rtf:.3f} < SIM_RTF_FLOOR {RTF_FLOOR} — sim too slow "
+                         "to be meaningful (see docs/operations.md 'Slow machines / low RTF').")
+    return rtf
+
+
+def sim_window(n, sim_secs, rtf, tick=0.02, safety=5.0):
+    """Yield sim-elapsed while < sim_secs of SIM time has passed; wall-ceiling backstop.
+
+    Each iteration ends in spin_once(tick) — at tick=0.02 the loop also paces a
+    ~50 Hz publisher (the twist_mux lesson, docs/m3-vio.md)."""
+    s0, w0 = sim_now(n), time.time()
+    ceiling = sim_secs / max(rtf, 1e-4) * safety + 10.0
+    while rclpy.ok() and sim_now(n) - s0 < sim_secs:
+        if time.time() - w0 > ceiling:
+            raise SystemExit(f"FAIL: wall ceiling {ceiling:.0f}s hit inside a "
+                             f"{sim_secs:g} sim-s window — RTF collapsed mid-run?")
+        yield sim_now(n) - s0
+        rclpy.spin_once(n, timeout_sec=tick)
+# ── end sim-time helpers ─────────────────────────────────────────────────────
 
 
 def yaw_of(q):
@@ -73,47 +130,46 @@ def main():
     # would time out. Sit still ~2 s (gravity), then two sharp forward jabs give the IMU
     # the transient -> "successful initialization". Verified: fires reliably; without it
     # the demo aborts with missing streams ['ov']. See docs/m3-vio.md.
-    while rclpy.ok() and n.get_clock().now().nanoseconds == 0:
-        rclpy.spin_once(n, timeout_sec=0.1)
-    t0 = time.time()
-    while rclpy.ok() and time.time() - t0 < 2.0:
-        pub_vel(0.0); rclpy.spin_once(n, timeout_sec=0.02)
+    wait_for_clock(n)
+    rtf = measure_rtf(n)
+    for _ in sim_window(n, 2.0, rtf):          # sit still: gravity for static init
+        pub_vel(0.0)
     for dur, vx in ((0.4, 1.2), (0.4, 0.0), (0.4, 1.2), (0.5, 0.0)):
-        t0 = time.time()
-        while rclpy.ok() and time.time() - t0 < dur:
-            pub_vel(vx); rclpy.spin_once(n, timeout_sec=0.02)
+        for _ in sim_window(n, dur, rtf):      # SIM-s jabs: real accel transient at any RTF
+            pub_vel(vx)
 
-    # wait for sim clock + all three streams (ego only appears once it has moved+seeded,
+    # wait for all three streams (ego only appears once it has moved+seeded,
     # so we nudge the robot a little while waiting).
-    t0 = time.time()
-    while rclpy.ok() and time.time() - t0 < 30 and (
-            n.get_clock().now().nanoseconds == 0 or None in (st["gt"], st["ov"], st["ego"])):
-        m = TwistStamped(); m.header.stamp = n.get_clock().now().to_msg()
-        m.header.frame_id = "base_link"; m.twist.linear.x = 0.3
-        drive.publish(m)
-        rclpy.spin_once(n, timeout_sec=0.02)   # ~50 Hz: don't let twist_mux time out
+    for _ in sim_window(n, 30.0, rtf):
+        if None not in (st["gt"], st["ov"], st["ego"]):
+            break
+        pub_vel(0.3)                           # window's spin(0.02) keeps this ~50 Hz
     missing = [k for k, v in st.items() if v is None]
     if missing:
-        print(f"FAIL: missing streams {missing} (sim/openvins/ego up?)", file=sys.stderr)
+        print(f"FAIL: missing streams {missing} after 30 sim-s at RTF≈{rtf:.2f} "
+              "(sim/openvins/ego up?)", file=sys.stderr)
         return 1
 
     rows = []
-    t_start = time.time()
-    while rclpy.ok() and time.time() - t_start < SECS:
+    next_row = -1.0
+    for el in sim_window(n, SECS, rtf):
+        # sim_window's spin_once(0.02) BOTH paces the publisher at ~50 Hz wall and
+        # processes callbacks. Do NOT switch to spin_once(0.0)+time.sleep(0.06): that
+        # publishes at only ~16 Hz, twist_mux times the command out between publishes,
+        # and the robot stutters to ~0.09 m/s (3.5 m over a 40 s drive) -> no
+        # translation -> mono-VIO scale blows up. 50 Hz holds the commanded speed.
         m = TwistStamped(); m.header.stamp = n.get_clock().now().to_msg()
         m.header.frame_id = "base_link"; m.twist.linear.x = V; m.twist.angular.z = WZ
         drive.publish(m)
-        # spin_once with a 0.02s timeout BOTH paces the loop at ~50 Hz and processes
-        # callbacks. Do NOT use spin_once(0.0)+time.sleep(0.06): that publishes at only
-        # ~16 Hz, twist_mux times the command out between publishes, and the robot
-        # stutters to ~0.09 m/s (3.5 m over a 40 s drive) -> no translation -> mono-VIO
-        # scale blows up. Sustained 50 Hz holds the commanded 0.5 m/s rock-solid.
-        rclpy.spin_once(n, timeout_sec=0.02)
-        rows.append((time.time() - t_start, *st["gt"], *st["ov"], *st["ego"]))
-    # stop
-    for _ in range(10):
+        # decimate rows to one per 0.02 SIM-s (the pre-sim-time ~50 Hz cadence, so
+        # row counts stay comparable at any RTF)
+        if el >= next_row:
+            rows.append((el, *st["gt"], *st["ov"], *st["ego"]))
+            next_row = el + 0.02
+    # stop (zero commands for 0.5 sim-s — the diff_drive ramp-down)
+    for _ in sim_window(n, 0.5, rtf):
         m = TwistStamped(); m.header.stamp = n.get_clock().now().to_msg()
-        drive.publish(m); rclpy.spin_once(n, timeout_sec=0.0); time.sleep(0.02)
+        drive.publish(m)
 
     # write the combined CSV + the three headerless x,y,z trajectory files for eval_tools
     with open(f"{prefix}_vio.csv", "w") as f:
@@ -136,7 +192,7 @@ def main():
         a_ego = ate(ego, gt)[0]         # ate() -> (ErrorStats, aligned); rigid SE(3) align
         a_ov = ate(ov, gt)[0]
         gt_len = float(np.sum(np.linalg.norm(np.diff(gt, axis=0), axis=1)))
-        print(f"rows={len(rows)}  gt_path={gt_len:.2f}m  "
+        print(f"rows={len(rows)}  rtf≈{rtf:.2f}  gt_path={gt_len:.2f}m  "
               f"ATE(ego_localizer)={a_ego.rmse:.3f}m  ATE(openvins_raw)={a_ov.rmse:.3f}m")
     except Exception as e:                                  # pragma: no cover
         print(f"rows={len(rows)} (ATE calc skipped: {e})")

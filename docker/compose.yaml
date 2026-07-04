@@ -24,6 +24,10 @@ x-env: &env
   # gz world name (pipeline | external bundle's <world name>) — set by
   # `deploy.sh world`; scripts that touch /world/<name>/... topics read it.
   SIM_WORLD_NAME: ${SIM_WORLD_NAME:-pipeline}
+  # Slow-sim knobs (docs/operations.md "Slow machines / low RTF"): wall-timeout
+  # multiplier for bring-up handshakes + the RTF floor demos abort below.
+  SLOW_SIM_FACTOR: ${SLOW_SIM_FACTOR:-1}
+  SIM_RTF_FLOOR: ${SIM_RTF_FLOOR:-0.02}
   NVIDIA_VISIBLE_DEVICES: all
   NVIDIA_DRIVER_CAPABILITIES: all   # graphics+compute → Gazebo ogre2 needs GL (PLAN §7.2)
 

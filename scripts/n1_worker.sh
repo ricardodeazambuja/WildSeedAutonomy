@@ -19,12 +19,25 @@ OUT="${OUT:-/tmp/n1_trajectory.csv}"
 DRIVE="${DRIVE:-/tmp/n1_drive.py}"
 J="/$NS/joy_teleop/cmd_vel"; ODOM="/$NS/platform/odom"; ES="/$NS/platform/emergency_stop"
 
-# robust odom forward-velocity read (rejects the DDS "message lost" line)
-rd(){ local v; for k in $(seq 1 6); do
+# ── sim-time helpers (bash) — keep the demo robust to slow sims (low RTF) ──
+# clock_s reads the sim /clock; wait_sim blocks for N SIM seconds with a wall
+# ceiling (60x + 90 s ≈ RTF floor 0.02) that only trips if the sim wedges.
+clock_s(){ ros2 topic echo /clock --field clock.sec --once 2>/dev/null | grep -oE '[0-9]+' | head -1; }
+wait_sim(){ local n="$1" t0 t w0=$SECONDS ceil=$(( $1 * 60 + 90 )); t0=$(clock_s)
+  while :; do t=$(clock_s)
+    [ -n "$t" ] && [ -n "$t0" ] && [ $((t - t0)) -ge "$n" ] && return 0
+    [ $((SECONDS - w0)) -gt "$ceil" ] && { echo "  (wait_sim: wall ceiling ${ceil}s hit waiting ${n} sim-s — sim wedged?)" >&2; return 1; }
+    sleep 0.5; done; }
+
+# robust odom forward-velocity read (rejects the DDS "message lost" line).
+# 20 x 0.3 s retries: at low RTF odom arrives slowly in WALL time (~0.4 Hz at
+# RTF 0.02), so the read window must cover several wall-seconds.
+rd(){ local v; for k in $(seq 1 20); do
   v=$(ros2 topic echo "$ODOM" --field twist.twist.linear.x --once 2>/dev/null \
       | grep -vi message | grep -oE '^-?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?' | head -1)
-  [ -n "$v" ] && { printf '%.4f' "$v"; return; }; sleep 0.2; done; echo READFAIL; }
-# drive (lin,ang) for DUR s via the correctly-stamped publisher (blocking)
+  [ -n "$v" ] && { printf '%.4f' "$v"; return; }; sleep 0.3; done; echo READFAIL; }
+# drive (lin,ang) for DUR SIM-seconds via the correctly-stamped publisher
+# (blocking; n1_drive.py interprets duration as sim time and paces 20 Hz wall)
 seg(){ python3 "$DRIVE" "$J" "$2" "$3" "$1" 20 >/dev/null 2>&1; }
 # set the e_stop lock; engage holds `true` for ENG_S to arm the latch, release=false
 lock(){ timeout "${2:-1}" ros2 topic pub -r 20 "$ES" std_msgs/msg/Bool "{data: $1}" >/dev/null 2>&1; }
@@ -40,26 +53,29 @@ cleanup; sleep 1
 echo '== clear e_stop lock (false) =='; lock false 1
 
 echo "== record odom trajectory while driving a path -> $OUT =="
-timeout 16 ros2 topic echo "$ODOM" --field pose.pose.position --csv > "$OUT" 2>/dev/null &
+# recorder is UNBOUNDED and killed when the (sim-duration) segs finish — a wall
+# `timeout` would truncate the capture on a slow sim. odom is sim-clocked, so
+# 12 sim-s of driving yields the same ~230 samples at any RTF.
+ros2 topic echo "$ODOM" --field pose.pose.position --csv > "$OUT" 2>/dev/null &
 REC=$!
-seg 4 0.5  0.0     # forward
+seg 4 0.5  0.0     # forward       (4 SIM seconds)
 seg 4 0.3  0.5     # arc left
 seg 4 0.5  0.0     # forward
-wait $REC 2>/dev/null
+kill "$REC" 2>/dev/null; wait "$REC" 2>/dev/null
 N=$(grep -c ',' "$OUT" 2>/dev/null || echo 0)
 echo "   recorded $N odom samples"
 
 echo '== e_stop verification: drive (priority 10) -> engage -> release =='
-python3 "$DRIVE" "$J" 0.5 0.0 22 20 >/dev/null 2>&1 &  TP=$!   # continuous stamped drive
-sleep 4; V1=$(rd); echo "   v driving:          $V1"
+python3 "$DRIVE" "$J" 0.5 0.0 22 20 >/dev/null 2>&1 &  TP=$!   # 22 SIM-s stamped drive
+wait_sim 4; V1=$(rd); echo "   v driving:          $V1"
 # engage: HOLD `true` in the background (heartbeat) through the measurement
 ros2 topic pub -r 20 "$ES" std_msgs/msg/Bool '{data: true}' >/dev/null 2>&1 &  EP=$!
-sleep 3; V2=$(rd); echo "   v e_stop engaged:   $V2  (e_stop held)"
+wait_sim 3; V2=$(rd); echo "   v e_stop engaged:   $V2  (e_stop held)"
 # release: stop the true heartbeat and publish a sustained `false`
 kill -9 "$EP" 2>/dev/null; pkill -9 -f 'emergency_stop' 2>/dev/null
 timeout 2 ros2 topic pub -r 20 "$ES" std_msgs/msg/Bool '{data: false}' >/dev/null 2>&1
 DRV_ALIVE=$(kill -0 "$TP" 2>/dev/null && echo yes || echo no)
-sleep 2; V3=$(rd); echo "   v e_stop released:  $V3  (driver alive=$DRV_ALIVE)"
+wait_sim 2; V3=$(rd); echo "   v e_stop released:  $V3  (driver alive=$DRV_ALIVE)"
 kill -9 "$TP" 2>/dev/null; pkill -9 -f 'n1_drive.py' 2>/dev/null; pkill -9 -f 'ros2 topic pub' 2>/dev/null
 sleep 1
 sp=$(pgrep -fc 'n1_drive.py' 2>/dev/null || true);   sp=${sp:-0}

@@ -34,6 +34,15 @@ Everything runs through `scripts/deploy.sh` (Docker is the only prerequisite;
 `ROLE=all` = whole stack on one box). Grouped into tiers: **setup**, **fast smoke
 tests**, **the live sim**, **the keystone demo**, and **VIO / procedural worlds**.
 
+> **Slow machines / sim-seconds contract.** Every demo and smoke gate below
+> defines its durations in **SIM seconds** and self-reports the measured RTF
+> (`[simtime] RTF≈…`), so they run correctly — just slower in wall time — on
+> weak machines or dense worlds. CSV `t` columns are sim-seconds too (the
+> committed reference artifacts were recorded at RTF≈1, where the two clocks
+> coincide). `./scripts/deploy.sh rtf` reads the sim speed any time;
+> [`operations.md`](operations.md) "Slow machines / low RTF" has the knobs
+> (`SLOW_SIM_FACTOR`, `SIM_RTF_FLOOR`) and the measured tuning ladder.
+
 ### Tier 0 — First-run setup (one-time)
 
 ```bash
@@ -97,43 +106,52 @@ ros2 topic list | grep -E 'lidar3d|oakd|imu|gps'   # expect namespaced a200_0000
 ### Tier 3 — The keystone: GPS-denied drift→reacquire demo
 
 This is the marquee result. It drives the robot through **GPS on → denied →
-reacquire** and records ego-estimate vs GPS truth. Run inside the sim container
-with `ego_localizer` in relative+GNSS mode (`launch/ego_localizer_gnss.launch.py`),
-then:
+reacquire** and records ego-estimate vs GPS truth. With the husky sim up, run
+`ego_localizer` in relative+GNSS mode **directly from source** (the
+`ego_localizer_gnss.launch.py` route needs a colcon-built/installed workspace,
+which the mounted `ros2_ws` doesn't ship):
 
 ```bash
-# inside the fusion/sim container, with the husky sim up + ego_localizer_gnss launched:
-python3 scripts/gps_denied_demo.py results/gps_denied_keystone.csv
-python3 scripts/plot_gps_denied.py results/gps_denied_keystone.csv results/gps_denied_keystone.png
+# inside the fusion container (deploy.sh shell fusion):
+PYTHONPATH=/ros2_ws/src/fusion_core:/ros2_ws/src/ego_localizer:$PYTHONPATH \
+  python3 /ros2_ws/src/ego_localizer/ego_localizer/node.py --ros-args \
+  --params-file /ros2_ws/src/ego_localizer/config/ego_localizer_gnss.yaml &
+# then (scripts/ isn't mounted in fusion — docker cp it in, or run from a bind mount):
+python3 gps_denied_demo.py /results/gps_denied_keystone.csv
+python3 plot_gps_denied.py /results/gps_denied_keystone.csv /results/gps_denied_keystone.png
 ```
 
-**Expect:** a printed summary `mean|ego-gps| on≈0.12 denied≈0.20 reacq≈0.14`, and
-a chart whose error envelope **rises through the shaded GPS-denied window and
-falls after reacquire**, with a top-down track that bulges off GPS during the
-outage and snaps back.
+**Expect:** a printed summary `mean|ego-gps| on≈0.2 denied≈1.6 reacq≈0.45`, and
+a chart whose error envelope **rises through the shaded GPS-denied window
+(≈0.2 → 3.3 m) and snaps back at reacquire**, with a top-down track that bulges
+off GPS during the outage and re-locks.
 **Caveats (honest, documented):**
 
-- Drift is *modest* (~0.2 m over 40 s) because sim wheel-odometry is accurate at
-  low speed — not a bug; bigger drift needs slip/bias or a longer outage.
+- These numbers are from the 2026-07-04 sim-time rework re-run
+  (`results/gps_denied_verify.png`): the demo now publishes at a sustained
+  50 Hz, so the robot actually holds the commanded 0.4 m/s — more distance in
+  the outage, more dead-reckoning drift, a clearer keystone. The original
+  committed artifact `results/gps_denied_keystone.png` (on=0.12 / denied=0.20 /
+  reacq=0.14) predates this; its gentler drift came from the old ~18 Hz
+  publisher stuttering through twist_mux timeouts.
 - GPS is ~1 Hz so the error sawtooths slightly. The demo is parameterised —
-  `gps_denied_demo.py <csv> [v wz on_s denied_s reacq_s]` — defaults already
-  drive slow with a long denial for the cleanest chart.
+  `gps_denied_demo.py <csv> [v wz on_s denied_s reacq_s]` (all SIM seconds).
 - Render charts **inside the fusion image**, not host conda (host has a numpy
   2.x/matplotlib mismatch).
-
-The committed reference artifact is already in `results/gps_denied_keystone.png`
-— you can look at that immediately without re-running anything.
 
 ### Tier 4 — VIO smoke + procedural worlds
 
 ```bash
 ./scripts/deploy.sh m3-smoke                 # stereo OpenVINS live-VIO gate
 ./scripts/deploy.sh world <bundle>           # swap in a WildSeed world, then re-run m3-smoke
+./scripts/deploy.sh rtf                      # measured sim speed + tier hint
+./scripts/bench_rtf.sh [--world-only] [bundle]   # where does the RTF go? (4 variants)
 ```
 
 **Expect:** `m3-smoke` reports stereo feature corners, 0 ms stereo sync, and a
 live OpenVINS `/odomimu`. Full VIO pipeline + how-to-run: [`m3-vio.md`](m3-vio.md);
-world bundling workflow + the RTF wall: [`wildseed-worlds.md`](wildseed-worlds.md).
+world bundling workflow + the RTF wall (with the measured variant table):
+[`wildseed-worlds.md`](wildseed-worlds.md).
 
 ## 3. Laptop-only verification (environment)
 
@@ -375,6 +393,42 @@ Unlocks ATE-vs-terrain-complexity sweeps for M3/M4/M5 across seeds/biomes
 [`wildseed-worlds.md`](wildseed-worlds.md) (RTF wall: dense demo worlds → RTF 0.04
 → controller activation starves; ~330-model scenario worlds run RTF ≈0.35; a
 controller watchdog in `husky_sim.launch.py` self-heals slow activations).
+
+**Slow-sim robustness + measured RTF optimization — re-baselined (2026-07-04).**
+Made the stack robust to slow sims (low RTF, weak machines) and optimized RTF on
+*measured* evidence — `scripts/bench_rtf.sh`, the 4-variant discriminating bench
+(full table: [`wildseed-worlds.md`](wildseed-worlds.md)). **What the measurement
+killed:** shadows-off and Label-strip were *no-ops* for RTF (the "obvious"
+render fruit doesn't exist here); dense worlds are **physics-step-bound**
+(forest 0.034 → 0.149 at step 1→4 ms) and the robot's **render sensors cost
+~half the throughput** (0.31 robot vs 0.59 world-only on wildseed_42). **What
+shipped on that evidence:** (1) *sim-seconds contract* — all demo/smoke
+durations (jerk-start, drive/record windows, CSV `t`) converted from wall to
+SIM time via an identical helper block in `m3_vio_demo.py` / `gps_denied_demo.py`
+/ `n1_drive.py` / `m3_smoke.py` (measures + prints RTF, aborts below
+`SIM_RTF_FLOOR`); (2) `SLOW_SIM_FACTOR` multiplies the wall-clock control-plane
+budgets (spawner handshake — the actual starvation knob — watchdog, world-ready);
+(3) `deploy.sh rtf` + an info-only `rtf_probe` in the launch (WARN < 0.1);
+(4) `tune_world_bundle.sh` (labels stripped + `--step 0.002` default in
+`prepare_wildseed_world.sh`); (5) OS1 gpu_lidar **1024×64 → 512×32** in
+`Dockerfile.sim`; (6) WildSeed-side `rig --no-labels` + `configs/sim-fast.yaml`
+(WildSeed commit `3e9ec63`). **Net RTF: wildseed_42 robot 0.31 → 0.50–0.66** —
+and it holds 0.66 even at CPUS=2 (weak-machine viable). **Verified:** at RTF≈1
+(pipeline) everything re-passed — diag VERDICT PASS (now computed from Δt_sim),
+N1 demo PASS (312 odom pts), m3-smoke PASS, **M3 re-baseline raw ATE 0.076 m /
+fused 0.082 m** over 20.6 m (vs logged 0.069/0.077 — cameras untouched by the
+lidar cut, within run variance), **keystone re-run rows=1381, on=0.21 →
+denied=1.59 → reacq=0.45 m** (`results/gps_denied_verify.png` — drift is ~8×
+the old reference because the 50 Hz sustained drive no longer stutters; the
+error now visibly *snaps* back at reacquisition). On a genuinely slowed sim:
+diag at **RTF 0.204** auto-scaled its windows and PASSed; m3-smoke at
+**RTF 0.390** (wildseed_42 + vio at CPUS=2) printed its SLOW-SIM banner and
+PASSed. *Honest caveats:* a pre-change m3-smoke FAIL at low RTF was not
+re-recorded (the mechanism — wall jerk = 16 sim-ms at RTF 0.04, VIO never
+initializes — is documented instead); the untuned-forest (RTF ~0.03) end-to-end
+soak wasn't run (below the practical floor; `SLOW_SIM_FACTOR` is the escape
+hatch there); **lidar recordings made before 512×32 are not comparable to new
+ones** (M4 hasn't started, so nothing recorded is invalidated).
 
 ## 5. Next steps — where the loop stops being laptop-closable
 

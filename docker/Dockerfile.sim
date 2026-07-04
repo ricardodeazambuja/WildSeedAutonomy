@@ -90,6 +90,24 @@ RUN sed -i 's|<shadows>1</shadows>|<shadows>0</shadows>|g; s|<cast_shadows>1</ca
     && grep -q '<update_rate>10</update_rate>' \
         /opt/ros/jazzy/share/clearpath_sensors_description/urdf/luxonis_oakd.urdf.xacro
 
+# ── Lidar render load: OS1 gpu_lidar 1024x64 -> 512x32 (OS1-32-class) ─────────
+# MEASURED (scripts/bench_rtf.sh, wildseed_42): the robot's render sensors cost
+# ~half the sim's throughput (RTF 0.31 with robot vs 0.59 world-only); the
+# gpu_lidar's 655k rays/s (1024x64 @10 Hz) rasterize the whole scene and are
+# the dominant sensor. 512x32 = 4x fewer rays, still 32 beams — comfortably
+# more than the 16-ch class most aerial datasets use (PLAN §9) and dense enough
+# for KISS-ICP (M4). Deliberate default-for-everyone (re-baselined in
+# docs/status-and-testing.md §4): M3 VIO (cameras) and the GPS-denied keystone
+# (wheel+IMU+GPS) don't consume the lidar, so their logged metrics stand;
+# lidar recordings made before this change are NOT comparable to new ones.
+# The guarded greps fail the BUILD (not silently no-op) if Clearpath's xacro
+# changes shape.
+RUN grep -q 'samples_h:=1024' /opt/ros/jazzy/share/clearpath_sensors_description/urdf/ouster_os1.urdf.xacro \
+    && sed -i 's|samples_h:=1024|samples_h:=512|; s|samples_v:=64|samples_v:=32|' \
+        /opt/ros/jazzy/share/clearpath_sensors_description/urdf/ouster_os1.urdf.xacro \
+    && grep -q 'samples_h:=512' /opt/ros/jazzy/share/clearpath_sensors_description/urdf/ouster_os1.urdf.xacro \
+    && grep -q 'samples_v:=32' /opt/ros/jazzy/share/clearpath_sensors_description/urdf/ouster_os1.urdf.xacro
+
 ENV GZ_VERSION=harmonic
 RUN echo 'source /opt/ros/jazzy/setup.bash' >> /etc/bash.bashrc
 

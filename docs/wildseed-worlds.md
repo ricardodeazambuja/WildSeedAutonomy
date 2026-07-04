@@ -42,9 +42,13 @@ cd ~/GitStuff/WildSeedAutonomy
 
 | file | what |
 |------|------|
-| `world.sdf` | the world, **shell-injected** (`wildseed rig --inject --shell-only`): Sensors(ogre2)/Imu/NavSat/AirPressure/Magnetometer systems + `<spherical_coordinates>`; any WildSeed `sensor_rig` include is stripped (the Husky is the robot) |
+| `world.sdf` | the world, **shell-injected** (`wildseed rig --inject --shell-only --no-labels`): Sensors(ogre2)/Imu/NavSat/AirPressure/Magnetometer systems + `<spherical_coordinates>`; any WildSeed `sensor_rig` include is stripped (the Husky is the robot); then **RTF-tuned** (`tune_world_bundle.sh`: leftover Label plugins stripped, physics step → 0.002 — see the RTF wall below) |
 | `models/` | only the model categories the world references, hardlinked from the WildSeed checkout when same-filesystem (≈0 extra disk) |
 | `spawn.json` | `{x, y, z, yaw, world_name}` — `z` sampled from the terrain mesh (`wildseed height`) + 0.3 m clearance, because WildSeed terrain is NOT flat and Clearpath's default `z=0.15` would bury or drop the robot |
+
+Bundles prepared **before** the RTF tuning existed migrate in place:
+`./scripts/tune_world_bundle.sh <bundle> --step 0.002` (idempotent), or just
+re-run `prepare_wildseed_world.sh`.
 
 ## How the pieces connect
 
@@ -65,13 +69,32 @@ cd ~/GitStuff/WildSeedAutonomy
 ## Gotchas
 
 - **Dense worlds collapse the real-time factor — and RTF < ~0.1 kills
-  controller activation.** Measured on the laptop (RTX 2070 Mobile, 8-CPU
-  cap): the dense `forest_world` demo (2,850 includes) runs at **RTF 0.04**,
-  and gz_ros2_control's sim-time-paced activation handshake starves —
-  `Failed to activate controller: platform_velocity_controller`, no odom, no
-  drive. Use `wildseed scenario` worlds (~600–700 includes) for closed-loop
-  runs and check RTF after load:
-  `gz topic -e -n1 -t /world/<name>/stats | grep real_time_factor`.
+  controller activation.** gz_ros2_control's sim-time-paced activation
+  handshake starves (`Failed to activate controller:
+  platform_velocity_controller`, no odom, no drive); the launch's
+  `controller_watchdog` self-heals it and `SLOW_SIM_FACTOR` widens the wall
+  budgets ([operations.md](operations.md) "Slow machines / low RTF"). Check
+  RTF any time: `./scripts/deploy.sh rtf` (or the `[rtf_probe]` launch log).
+  **Where the RTF actually goes — measured** (`scripts/bench_rtf.sh`,
+  RTX 2070 Max-Q laptop; mean ±sd of 10 samples):
+
+  | world | variant | RTF |
+  |---|---|---|
+  | wildseed_42 (330 includes) | robot, untuned | 0.310 ±0.03 |
+  | wildseed_42 | world-only (no robot) | 0.591 ±0.16 |
+  | wildseed_42 | robot, shadows off | 0.280 ±0.05 — **no-op** |
+  | wildseed_42 | world-only, labels stripped | 0.680 ±0.12 — within noise |
+  | wildseed_42 | robot, **tuned** (step 2 ms + lidar 512×32) | **0.5–0.66**, m3-smoke PASS |
+  | forest (2,849 includes) | world-only | 0.034 ±0.01 |
+  | forest | world-only, shadows off / labels stripped | 0.034 / 0.035 — **no-ops** |
+  | forest | world-only, **step 4 ms** | **0.149 ±0.05** (~linear in step) |
+
+  Conclusions: (1) dense worlds are **physics-step-bound** — density
+  (`wildseed scenario --density-scale`) and `max_step_size` are the levers,
+  shadows/sky/Label plugins are not; (2) with the robot present its **render
+  sensors cost ~half the throughput** — hence the OS1 512×32 default in
+  `Dockerfile.sim`. `prepare_wildseed_world.sh` bakes the evidence in
+  (labels stripped + step 0.002 by default, via `tune_world_bundle.sh`).
 - **Heavy worlds load slowly.** A dense WildSeed world is thousands of mesh
   includes; the world-ready poll backstop is 180 s. If the spawn still races,
   check `deploy.sh logs husky` for the `/world/<name>/create` service.

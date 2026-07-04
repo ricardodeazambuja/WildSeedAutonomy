@@ -13,8 +13,13 @@ mode (launch/ego_localizer_gnss.launch.py).
 Usage: gps_denied_demo.py <out.csv> [v] [wz] [on_s] [denied_s] [reacq_s]
   Defaults drive slow with a long denial so the dead-reckoning drift clearly
   exceeds the ~1 Hz GPS sawtooth (a cleaner keystone chart).
+
+All durations (and the CSV `t` column) are SIM seconds — at low RTF the demo
+takes proportionally longer in wall time but the recorded physics is identical.
+The measured RTF is printed at start and in the summary.
 """
 import math
+import os
 import sys
 import time
 
@@ -27,6 +32,59 @@ from std_msgs.msg import Bool
 
 EARTH_R = 6378137.0
 NS = "/a200_0000"
+
+# ── sim-time helpers ─────────────────────────────────────────────────────────
+# DUPLICATED in: scripts/m3_vio_demo.py, scripts/gps_denied_demo.py,
+# scripts/n1_drive.py, ros2_ws/src/sensing_bringup/scripts/m3_smoke.py
+# (three different container delivery paths — no shared import; keep in sync).
+#
+# All experiment durations are SIM seconds: at low RTF the run takes longer on
+# the wall clock but the physics (drive distance, drift windows, jerk
+# transients) is identical. Wall-clock ceilings only catch a wedged sim.
+RTF_FLOOR = float(os.environ.get("SIM_RTF_FLOOR", "0.02"))
+
+
+def sim_now(n):
+    return n.get_clock().now().nanoseconds * 1e-9
+
+
+def wait_for_clock(n, wall_ceiling=120.0):
+    t0 = time.time()
+    while rclpy.ok() and n.get_clock().now().nanoseconds == 0:
+        if time.time() - t0 > wall_ceiling:
+            raise SystemExit(f"FAIL: no /clock after {wall_ceiling:.0f}s wall — sim up? "
+                             "clock_bridge alive? (docs/sim-debugging-notes.md #7)")
+        rclpy.spin_once(n, timeout_sec=0.1)
+
+
+def measure_rtf(n, sample_wall_s=3.0):
+    s0, w0 = sim_now(n), time.time()
+    while time.time() - w0 < sample_wall_s:
+        rclpy.spin_once(n, timeout_sec=0.05)
+    rtf = max((sim_now(n) - s0) / (time.time() - w0), 1e-4)
+    note = (f"  (SLOW SIM: durations are SIM seconds; wall time stretches ~{1 / rtf:.0f}x)"
+            if rtf < 0.5 else "")
+    print(f"[simtime] RTF≈{rtf:.3f}{note}", flush=True)
+    if rtf < RTF_FLOOR:
+        raise SystemExit(f"FAIL: RTF {rtf:.3f} < SIM_RTF_FLOOR {RTF_FLOOR} — sim too slow "
+                         "to be meaningful (see docs/operations.md 'Slow machines / low RTF').")
+    return rtf
+
+
+def sim_window(n, sim_secs, rtf, tick=0.02, safety=5.0):
+    """Yield sim-elapsed while < sim_secs of SIM time has passed; wall-ceiling backstop.
+
+    Each iteration ends in spin_once(tick) — at tick=0.02 the loop also paces a
+    ~50 Hz publisher (the twist_mux lesson, docs/m3-vio.md)."""
+    s0, w0 = sim_now(n), time.time()
+    ceiling = sim_secs / max(rtf, 1e-4) * safety + 10.0
+    while rclpy.ok() and sim_now(n) - s0 < sim_secs:
+        if time.time() - w0 > ceiling:
+            raise SystemExit(f"FAIL: wall ceiling {ceiling:.0f}s hit inside a "
+                             f"{sim_secs:g} sim-s window — RTF collapsed mid-run?")
+        yield sim_now(n) - s0
+        rclpy.spin_once(n, timeout_sec=tick)
+# ── end sim-time helpers ─────────────────────────────────────────────────────
 
 
 def main():
@@ -59,15 +117,18 @@ def main():
     # ego_localizer doesn't seed/publish until the robot MOVES, and we're the one
     # that moves it — so requiring ego here would deadlock. ego data appears during
     # the first drive phase once it seeds from the GPS course.
-    t0 = time.time()
-    while rclpy.ok() and time.time() - t0 < 30 and (
-            n.get_clock().now().nanoseconds == 0 or state["gps"] is None):
-        rclpy.spin_once(n, timeout_sec=0.1)
+    wait_for_clock(n)
+    rtf = measure_rtf(n)
+    for _ in sim_window(n, 30.0, rtf, tick=0.1):   # GPS is ~1 Hz SIM time
+        if state["gps"] is not None:
+            break
     if state["gps"] is None:
-        print("FAIL: no gps data (is the husky sim with the gps sensor up?)", file=sys.stderr)
+        print(f"FAIL: no gps data after 30 sim-s at RTF≈{rtf:.2f} "
+              "(is the husky sim with the gps sensor up?)", file=sys.stderr)
         return 1
 
     rows = []
+    t0s = sim_now(n)   # CSV t column = SIM seconds since the demo start
 
     def set_gps(on):
         b = Bool(); b.data = on
@@ -76,28 +137,29 @@ def main():
 
     def run_phase(label, secs, gps_on):
         set_gps(gps_on)
-        end = time.time() + secs
-        while rclpy.ok() and time.time() < end:
+        next_row = -1.0
+        for el in sim_window(n, secs, rtf):
             m = TwistStamped()
             m.header.stamp = n.get_clock().now().to_msg()
             m.header.frame_id = "base_link"
             m.twist.linear.x = V
             m.twist.angular.z = WZ
             drive.publish(m)
-            rclpy.spin_once(n, timeout_sec=0.0)
-            if state["ego"] and state["gps"]:
+            # decimate rows to one per 0.05 SIM-s (the pre-sim-time cadence, so
+            # CSV row counts stay comparable at any RTF)
+            if state["ego"] and state["gps"] and el >= next_row:
                 ex, ey = state["ego"]; gx, gy = state["gps"]
-                rows.append((time.time() - t0, label, ex, ey, gx, gy,
+                rows.append((sim_now(n) - t0s, label, ex, ey, gx, gy,
                              math.hypot(ex - gx, ey - gy)))
-            time.sleep(0.05)
+                next_row = el + 0.05
 
     run_phase("on", ON_S, True)
     run_phase("denied", DENIED_S, False)
     run_phase("reacq", REACQ_S, True)
-    # stop the robot
-    for _ in range(10):
+    # stop the robot (zero commands for 0.5 sim-s — the diff_drive ramp-down)
+    for _ in sim_window(n, 0.5, rtf):
         m = TwistStamped(); m.header.stamp = n.get_clock().now().to_msg()
-        drive.publish(m); rclpy.spin_once(n, timeout_sec=0.0); time.sleep(0.02)
+        drive.publish(m)
 
     with open(out, "w") as f:
         f.write("t,phase,ego_x,ego_y,gps_x,gps_y,err\n")
@@ -107,7 +169,7 @@ def main():
     def mean_err(label):
         e = [r[6] for r in rows if r[1] == label]
         return sum(e) / len(e) if e else float("nan")
-    print(f"rows={len(rows)}  mean|ego-gps|  on={mean_err('on'):.3f}  "
+    print(f"rows={len(rows)}  rtf≈{rtf:.2f}  mean|ego-gps|  on={mean_err('on'):.3f}  "
           f"denied={mean_err('denied'):.3f}  reacq={mean_err('reacq'):.3f}  -> {out}")
     n.destroy_node(); rclpy.shutdown()
     return 0

@@ -82,6 +82,16 @@ def generate_launch_description():
     world_name = WORLD
     extra_resources, spawn = [], {}
 
+    # SLOW_SIM_FACTOR (from .env via compose x-env, default 1) multiplies the
+    # WALL-clock ceilings below. On a slow sim (low RTF) the sim-time-paced
+    # controller_manager needs proportionally more wall time to answer spawner/
+    # service handshakes — the exact starvation documented in
+    # docs/operations.md "Slow machines / low RTF".
+    try:
+        f = max(1, int(os.environ.get('SLOW_SIM_FACTOR', '1') or 1))
+    except ValueError:
+        f = 1
+
     external = _external_bundle()
     if external:
         world_sdf, models_dir, world_name, spawn = external
@@ -121,11 +131,11 @@ def generate_launch_description():
 
     # CONDITION (not a delay): poll until gz advertises the world's spawn service,
     # i.e. the world is loaded and ready to accept a model. Starts alongside gz and
-    # exits as soon as ready (or after 180 tries as a backstop — WildSeed worlds
+    # exits as soon as ready (or after 180×f tries as a backstop — WildSeed worlds
     # include hundreds of mesh models and load slower than the pipeline world).
     wait_for_world = ExecuteProcess(
         cmd=['bash', '-c',
-             f'for i in $(seq 1 180); do '
+             f'for i in $(seq 1 {180 * f}); do '
              f'gz service -l 2>/dev/null | grep -q "/world/{world_name}/create" && exit 0; '
              f'sleep 1; done; exit 0'],
         output='screen')
@@ -161,28 +171,51 @@ def generate_launch_description():
     # attempt succeeds. Idempotent watchdog: poll the controller list and
     # re-spawn/re-activate anything not active; exits as soon as both are
     # active. No-op on the flat pipeline world (they activate first try).
+    #
+    # Clearpath's robot_spawn.launch.py runs the INITIAL spawners with their
+    # default wall-clock --controller-manager-timeout (not widenable from here);
+    # at low RTF those may die — this watchdog is their designed recovery. All
+    # wall budgets below scale with SLOW_SIM_FACTOR (f); the spawner's
+    # controller-manager handshake is the timeout that actually starves.
     cm = '/a200_0000/controller_manager'
     controller_watchdog = ExecuteProcess(
         cmd=['bash', '-c',
              'source /opt/ros/jazzy/setup.bash; '
-             'for i in $(seq 1 20); do sleep 15; '
-             '  L=$(timeout 10 ros2 service call ' + cm + '/list_controllers '
+             f'for i in $(seq 1 {30 * f}); do sleep 15; '
+             f'  L=$(timeout {10 * f} ros2 service call ' + cm + '/list_controllers '
              '      controller_manager_msgs/srv/ListControllers 2>/dev/null); '
              '  ok=1; '
              '  for c in joint_state_broadcaster platform_velocity_controller; do '
              '    echo "$L" | grep -q "name=.$c., state=.active." && continue; '
              '    ok=0; '
              '    echo "[controller_watchdog] $c not active — recovering"; '
-             '    timeout 40 ros2 run controller_manager spawner "$c" '
-             '      --controller-manager-timeout 20 --ros-args -r __ns:=/a200_0000 '
+             f'    timeout {40 * f} ros2 run controller_manager spawner "$c" '
+             f'      --controller-manager-timeout {20 * f} --ros-args -r __ns:=/a200_0000 '
              '      2>/dev/null || '
-             '    timeout 10 ros2 service call ' + cm + '/switch_controller '
+             f'    timeout {10 * f} ros2 service call ' + cm + '/switch_controller '
              '      controller_manager_msgs/srv/SwitchController '
              '      "{activate_controllers: [$c], strictness: 1}" >/dev/null 2>&1; '
              '  done; '
              '  [ "$ok" = 1 ] && { echo "[controller_watchdog] all active"; exit 0; }; '
              'done; '
-             'echo "[controller_watchdog] gave up — check list_controllers" >&2'],
+             'echo "[controller_watchdog] gave up — check list_controllers; '
+             'if RTF < 0.1 raise SLOW_SIM_FACTOR in .env (docs/operations.md)" >&2'],
+        output='screen')
+
+    # Info-only RTF probe: after bring-up settles, report the measured real-time
+    # factor in the launch log and WARN below 0.1 (where wall-clock handshakes
+    # start starving). Never fails the launch (always exit 0).
+    rtf_probe = ExecuteProcess(
+        cmd=['bash', '-c',
+             'source /opt/ros/jazzy/setup.bash; sleep 45; '
+             f'r=$(gz topic -e -n 5 -t /world/{world_name}/stats 2>/dev/null '
+             '  | grep -oE "real_time_factor: [0-9.eE+-]+" '
+             '  | awk \'{s+=$2;c++} END {if (c) printf "%.3f", s/c}\'); '
+             'if [ -z "$r" ]; then echo "[rtf_probe] RTF unavailable (stats topic silent)"; exit 0; fi; '
+             'echo "[rtf_probe] RTF≈$r"; '
+             'awk -v r="$r" \'BEGIN { if (r < 0.1) print "[rtf_probe] WARN: RTF < 0.1 — '
+             'controller activation may starve; set SLOW_SIM_FACTOR in .env and see '
+             'docs/operations.md (Slow machines / low RTF)" }\'; exit 0'],
         output='screen')
 
     return LaunchDescription([
@@ -192,8 +225,8 @@ def generate_launch_description():
         RegisterEventHandler(OnProcessExit(target_action=prepare,
                                           on_exit=[gz_sim, wait_for_world])),
         # world ready -> start the /clock bridge, then spawn robot + controllers
-        # (+ the activation watchdog for heavy worlds)
+        # (+ the activation watchdog for heavy worlds + the info-only RTF probe)
         RegisterEventHandler(OnProcessExit(target_action=wait_for_world,
                                           on_exit=[clock_bridge, robot_spawn,
-                                                   controller_watchdog])),
+                                                   controller_watchdog, rtf_probe])),
     ])

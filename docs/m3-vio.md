@@ -127,6 +127,13 @@ jabs) to fire OpenVINS' static init — a smooth diff-drive ramp never trips the
 threshold — then drives the recorded curve at 50 Hz (publishing slower lets twist_mux
 time the command out, so the robot stutters and mono/stereo VIO starves on no motion).
 
+All the demo's durations — the jerk jabs, the warmup, the `secs` drive window, the
+CSV `t` column — are **SIM seconds**: on a slow sim (low RTF) the run stretches in
+wall time but the driven path, accel transients and recorded physics are identical.
+The script measures and prints the RTF at start and aborts below `SIM_RTF_FLOOR`
+(see [operations.md](operations.md) "Slow machines / low RTF"). Same contract in
+`m3_smoke.py` and `gps_denied_demo.py`.
+
 ## Smoke gate — `./scripts/deploy.sh m3-smoke`
 
 A fail-fast regression check (the "texture/feature gate" of PLAN §14/§17.4, extended to

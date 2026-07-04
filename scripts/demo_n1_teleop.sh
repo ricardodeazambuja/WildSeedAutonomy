@@ -20,11 +20,17 @@ NS="${NS:-a200_0000}"; KEEP="${KEEP:-1}"
 CID="sensing-node-husky-1"
 mkdir -p "$ROOT/results"
 
+# SLOW_SIM_FACTOR (env or .env, default 1) widens wall-clock ceilings on slow
+# sims — see docs/operations.md "Slow machines / low RTF". The worker itself
+# measures in SIM time (n1_worker.sh), so only this bring-up wait needs scaling.
+F="${SLOW_SIM_FACTOR:-$(grep -E '^SLOW_SIM_FACTOR=' "$ENV_FILE" 2>/dev/null | cut -d= -f2)}"
+F="${F:-1}"
+
 echo '== up husky (compute) =='
 "${DC[@]}" --profile compute up -d husky >/dev/null 2>&1
 
-echo '== wait for controller_manager (condition, not a fixed sleep; max ~140s) =='
-for i in $(seq 1 70); do
+echo "== wait for controller_manager (condition, not a fixed sleep; max ~$((140 * F))s) =="
+for i in $(seq 1 $((70 * F))); do
   "${DC[@]}" --profile compute exec -T husky bash -lc \
     "source /opt/ros/jazzy/setup.bash; ros2 node list" 2>/dev/null | grep -q controller_manager \
     && { echo "  up after ~$((i * 2))s"; break; }
