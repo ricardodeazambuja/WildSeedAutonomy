@@ -1,0 +1,31 @@
+# ego_localizer for the M3 visual-inertial demo (OpenVINS, in sim).
+#
+# VIO ALONE: the relative motion comes from OpenVINS (/odomimu) fused with
+# the IMU yaw-rate. use_odom=false on purpose — the sim's wheel odom is near-perfect,
+# so including it would flatter the chart and hide whether the *visual* frontend
+# actually works. odom_mode=relative => the absolute IMU yaw (off-frame, §17.4) is
+# never fused; only its yaw-rate. Seed at the origin (eval_tools ATE aligns away the
+# constant offset). No GPS here — drift vs ground truth is the honest M3 metric.
+/ego_localizer:
+  ros__parameters:
+    use_sim_time: true
+    odom_mode: relative
+    use_odom: false
+    use_visual: true
+    gps_enabled: false           # M3 = visual frontend ONLY. GNSS fusion is M5's keystone;
+                                 # the node defaults gps_enabled=True, so WITHOUT this line
+                                 # the noisy 1 Hz NavSatFix gets fused and degrades the chart
+                                 # (fused 0.31 m vs raw VIO 0.06 m). Off here = honest M3 metric.
+    seed_at_origin: true
+    imu_topic: /a200_0000/sensors/imu_0/data
+    visual_topic: /odomimu
+    output_topic: /ego_localizer/odom
+    output_frame: odom
+    child_frame: base_link
+    publish_rate: 30.0
+    publish_tf: false
+    sigma_a: 1.0
+    sigma_alpha: 1.0
+    sigma_imu_wz: 0.02
+    sigma_visual_v: 0.05         # VIO velocity-increment std (m/s) — trust the frontend
+    sigma_visual_wz: 0.02

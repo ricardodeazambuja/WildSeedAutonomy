@@ -1,0 +1,97 @@
+# Sensing-node SIMULATION + GUI image  —  ROS 2 Jazzy + Gazebo Harmonic.
+#
+# ONE image serves three roles, chosen by the compose `command:`:
+#   sim    : headless Gazebo server   (gz sim -s -r --headless-rendering)   [GPU box]
+#   rviz   : RViz2, renders locally over DDS                                [where you sit]
+#   gzgui  : Gazebo GUI client (gz sim -g), renders locally over gz-transport
+#
+# osrf/ros:jazzy-desktop-full already bundles Gazebo Harmonic, RViz2 and ros_gz
+# (REP 2001 'simulation' variant), so there is no separate GUI image to build —
+# this is the "one GUI image" half of the laptop/server-symmetric design.
+# We add the Clearpath simulator on top: the Husky UGV + outdoor "pipeline"
+# world used by the sim milestones (officially Jazzy+Harmonic since May 2025).
+FROM osrf/ros:jazzy-desktop-full
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Belt-and-suspenders (PLAN §7.1): make sure ros_gz + the bits the smoke tests
+# need are present even if the base variant shifts. clearpath-simulator pulls in
+# clearpath_gz / clearpath_common / robot descriptions + the gz↔ROS bridges.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ros-jazzy-ros-gz \
+        ros-jazzy-rviz2 \
+        ros-jazzy-demo-nodes-cpp \
+        ros-jazzy-clearpath-simulator \
+        mesa-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# The osrf base image is an OLDER apt snapshot than Clearpath's freshly-pulled
+# deps, so base libs (notably libdiagnostic_updater 4.2.6 vs 4.2.7) lag the
+# version those packages were built against → ABI breaks ("undefined symbol:
+# diagnostic_updater::Updater::Updater(...)") that kill twist_mux, joy_linux AND
+# gz_ros2_control's controller_manager → no controllers / odom / movement.
+# Align the whole image to the current repo snapshot.
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
+
+# Fail the build early if modern Gazebo + the Clearpath sim aren't actually here
+# (PLAN §7.1).
+RUN bash -lc 'source /opt/ros/jazzy/setup.bash && gz sim --versions && \
+              ros2 pkg prefix clearpath_gz'
+
+# Clearpath ships its description with the xacro arg `is_sim` defaulting to FALSE,
+# and its generators never pass is_sim:=true (a known Jazzy+Harmonic bug). So a
+# SIM spawn gets the REAL-hardware ros2_control plugin
+# (clearpath_hardware_interfaces/*Hardware) and NO gz_ros2_control system plugin →
+# Gazebo never starts a controller_manager → no joint_states / odom / movement.
+# This is a sim-only image, so flip the default to TRUE: the spawned robot then
+# uses gz_ros2_control/GazeboSimSystem + the gz_ros2_control-system plugin, and the
+# controllers (joint_state_broadcaster, diff_drive) come up. See docs/operations.md.
+RUN sed -i 's/name="is_sim" default="false"/name="is_sim" default="true"/' \
+        /opt/ros/jazzy/share/clearpath_platform_description/urdf/*/*.urdf.xacro \
+    && grep -q 'is_sim" default="true"' \
+        /opt/ros/jazzy/share/clearpath_platform_description/urdf/a200/a200.urdf.xacro
+
+# NOTE: the procedural <sky> is kept (was briefly stripped pre-#8). The "lurid yellow
+# RGB 138,138,0" full-frame blanks were never the sky's fault — yellow was just the
+# COLOUR of the llvmpipe software-render blank (root cause: missing NVIDIA EGL vendor
+# ICD, fixed below; plus the sub-deck camera mount, fixed in robot.yaml). With the GPU
+# actually selected the sky renders correctly, so the strip is redundant and removed —
+# the sky gives the camera a realistic horizon. See docs/sim-debugging-notes.md "#8".
+
+# ── THE camera render fix: register the NVIDIA EGL vendor ICD ──────────────────
+# The OAK-D camera shipped solid clear-colour frames because ogre2's headless EGL
+# was falling back to **llvmpipe (Mesa software rendering)**, NOT the RTX 2070:
+# the NVIDIA driver libs are injected (libEGL_nvidia.so present) but the glvnd EGL
+# *vendor ICD* `/usr/share/glvnd/egl_vendor.d/10_nvidia.json` is missing, so the EGL
+# loader only finds `50_mesa.json` -> software render -> the camera's texture-heavy
+# colour pass blows llvmpipe's tiny CPU-RAM budget ("Texture memory budget exceeded.
+# Stalling GPU.") and emits the clear colour (the gpu_lidar's lighter depth pass
+# survives -> lidar never blanked, the decisive clue). Registering the NVIDIA ICD
+# makes ogre2 select the GPU (8 GB VRAM), and the blanking stops. Full diagnosis:
+# docs/sim-debugging-notes.md "#8 in detail".
+RUN mkdir -p /usr/share/glvnd/egl_vendor.d \
+    && printf '{\n    "file_format_version" : "1.0.0",\n    "ICD" : {\n        "library_path" : "libEGL_nvidia.so.0"\n    }\n}\n' \
+       > /usr/share/glvnd/egl_vendor.d/10_nvidia.json \
+    && grep -q libEGL_nvidia /usr/share/glvnd/egl_vendor.d/10_nvidia.json
+
+
+# ── Optional render-load reductions (NOT the camera fix) ──────────────────────
+# The actual camera fixes are (1) the EGL ICD above and (2) raising the camera above
+# the chassis deck (robot.yaml). These two are kept only as lightweight load cuts:
+#   1) shadows OFF in every world  — cheaper ogre2 render, faster headless sim.
+#   2) OAK-D update_rate 30 -> 10   — 10 Hz is plenty for the VIO frontend.
+# Both were part of the verified-working config; neither is required once on the GPU.
+RUN sed -i 's|<shadows>1</shadows>|<shadows>0</shadows>|g; s|<cast_shadows>1</cast_shadows>|<cast_shadows>0</cast_shadows>|g; s|<cast_shadows>true</cast_shadows>|<cast_shadows>false</cast_shadows>|g' \
+        /opt/ros/jazzy/share/clearpath_gz/worlds/*.sdf \
+    && ! grep -qE '<shadows>1</shadows>|<cast_shadows>(1|true)</cast_shadows>' \
+        /opt/ros/jazzy/share/clearpath_gz/worlds/pipeline.sdf \
+    && sed -i 's|<update_rate>${update_rate}</update_rate>|<update_rate>10</update_rate>|' \
+        /opt/ros/jazzy/share/clearpath_sensors_description/urdf/luxonis_oakd.urdf.xacro \
+    && grep -q '<update_rate>10</update_rate>' \
+        /opt/ros/jazzy/share/clearpath_sensors_description/urdf/luxonis_oakd.urdf.xacro
+
+ENV GZ_VERSION=harmonic
+RUN echo 'source /opt/ros/jazzy/setup.bash' >> /etc/bash.bashrc
+
+# Base image already provides /ros_entrypoint.sh (sources ROS, execs CMD).
+CMD ["bash"]

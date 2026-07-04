@@ -1,0 +1,24 @@
+# ego_localizer for the GPS-denied keystone (PLAN §11/M5, in sim).
+# Wheel odom is RELATIVE (twist) so it dead-reckons/drifts; GNSS is the droppable
+# absolute fix. Toggle GPS at runtime:
+#   ros2 topic pub --once /ego_localizer/set_gps_enabled std_msgs/msg/Bool '{data: false}'
+/ego_localizer:
+  ros__parameters:
+    use_sim_time: true
+    odom_mode: relative
+    imu_topic: /a200_0000/sensors/imu_0/data
+    odom_topic: /a200_0000/platform/odom
+    gps_topic: /a200_0000/sensors/gps_0/fix
+    output_topic: /ego_localizer/odom
+    output_frame: map            # GNSS ENU is an absolute (map) frame
+    child_frame: base_link
+    publish_rate: 30.0
+    publish_tf: false
+    gps_enabled: true
+    sigma_a: 1.0
+    sigma_alpha: 1.0
+    sigma_imu_yaw: 0.05
+    sigma_imu_wz: 0.02
+    sigma_odom_v: 0.30           # relative odom: looser so GNSS owns position
+    sigma_odom_wz: 0.02
+    sigma_gnss: 0.15            # GNSS absolute-fix std (m): strong, sim GPS is clean

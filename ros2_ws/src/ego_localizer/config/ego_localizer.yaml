@@ -1,0 +1,19 @@
+# ego_localizer params for the Husky sim (a200_0000). Override per-frontend later.
+/ego_localizer:
+  ros__parameters:
+    use_sim_time: true
+    imu_topic: /a200_0000/sensors/imu_0/data
+    odom_topic: /a200_0000/platform/odom
+    output_topic: /ego_localizer/odom
+    output_frame: odom
+    child_frame: base_link
+    publish_rate: 30.0
+    publish_tf: false           # keep off so it never fights the sim's odom->base_link
+    # process noise (tuning knobs): unmodelled linear / angular acceleration
+    sigma_a: 1.0
+    sigma_alpha: 1.0
+    # measurement noise std-devs
+    sigma_imu_yaw: 0.05
+    sigma_imu_wz: 0.02
+    sigma_odom_xy: 0.1
+    sigma_odom_yaw: 0.1

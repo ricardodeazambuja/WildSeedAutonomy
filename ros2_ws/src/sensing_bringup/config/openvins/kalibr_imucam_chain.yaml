@@ -1,0 +1,47 @@
+%YAML:1.0
+# Camera <-> IMU calibration for the sim OAK-D Lite STEREO pair. Both sim cameras are
+# ideal pinholes (no distortion), so intrinsics come straight from the FOV, not a
+# checkerboard calibration. See docs/m3-vio.md for how fx/cx are derived from the gz HFOV.
+#
+# STEREO: cam0 = LEFT, cam1 = RIGHT, 0.075 m baseline along body-y (= image x). The two
+# differ ONLY in the y of p_CinI (+0.0375 / -0.0375); they share the identical R_CtoI
+# (the -15 deg mount pitch is about body-y, so the baseline stays horizontal after tilt).
+# The p_CinI y-separation here MUST equal the robot.yaml mount y-separation (0.075 m) or
+# metric scale comes out wrong. cam_overlaps wire the stereo matching (cam0<->cam1).
+#
+# T_imu_cam = [ R_CtoI | p_CinI ] : rotation camera->IMU, camera origin in IMU.
+# R_CtoI maps the optical frame (x-right, y-down, z-forward) into the IMU/body frame
+# (x-forward, y-left, z-up). Base optical->body convention (§17) composed with the
+# -15 deg DOWN mount pitch (robot.yaml rpy=[0,0.2618,0]): R_CtoI = Ry(+0.2618) @
+# R_opt_to_body = Ry(pitch) @ [[0,0,1],[-1,0,0],[0,-1,0]]. cam-Z(forward) maps to body
+# (0.9659,0,-0.2588) i.e. forward-and-down by 15 deg. Regenerate if the pitch changes.
+#
+# Topics: BOTH point at the RAW color image (NOT image_guarded). The EGL render fix
+# (sim-debugging-notes #8) made the blank-frame guard redundant, and mixing a guarded
+# cam0 with a raw cam1 would desync the stereo timestamps -> every pair dropped.
+cam0:                                              # LEFT  (base_link [0.25, +0.0375, 0.30])
+  T_imu_cam:
+    - [ 0.000000, -0.258819,  0.965926, 0.2500]
+    - [-1.000000,  0.000000,  0.000000, 0.0375]
+    - [ 0.000000, -0.965926, -0.258819, 0.3000]
+    - [ 0.0,       0.0,        0.0,      1.0000]
+  cam_overlaps: [1]
+  camera_model: pinhole
+  distortion_model: radtan
+  distortion_coeffs: [0.0, 0.0, 0.0, 0.0]          # ideal sim camera: no lens distortion
+  intrinsics: [221.7650, 221.7650, 160.0, 120.0]   # fu, fv, cu, cv  (HFOV 1.25 rad)
+  resolution: [320, 240]
+  rostopic: /a200_0000/sensors/camera_0/color/image
+cam1:                                              # RIGHT (base_link [0.25, -0.0375, 0.30])
+  T_imu_cam:
+    - [ 0.000000, -0.258819,  0.965926,  0.2500]
+    - [-1.000000,  0.000000,  0.000000, -0.0375]
+    - [ 0.000000, -0.965926, -0.258819,  0.3000]
+    - [ 0.0,       0.0,        0.0,       1.0000]
+  cam_overlaps: [0]
+  camera_model: pinhole
+  distortion_model: radtan
+  distortion_coeffs: [0.0, 0.0, 0.0, 0.0]
+  intrinsics: [221.7650, 221.7650, 160.0, 120.0]
+  resolution: [320, 240]
+  rostopic: /a200_0000/sensors/camera_1/color/image

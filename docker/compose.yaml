@@ -1,0 +1,287 @@
+# Sensing-node — Milestone-1 thin-slice compose.
+#
+# Docker-only. The SAME file runs on the LAPTOP and on the SERVER; the topology
+# is selected by ROLE in .env (read by deploy.sh) plus Compose *profiles*:
+#   profile compute : sim + fusion        (headless; run on whichever box has the GPU)
+#   profile gui     : rviz + gzgui        (render LOCALLY — run where the human sits)
+#   profile smoke   : talker + listener   (proves cross-container/host DDS)
+#
+# GUI = "Option 1": RViz renders over DDS, the Gazebo GUI over gz-transport, both
+# on the LOCAL GPU. No pixel streaming. See docs/headless-gui.md.
+#
+# Networking: host mode + a shared ROS_DOMAIN_ID / GZ_PARTITION so DDS and
+# gz-transport discover across containers and across the two machines on the LAN
+# (PLAN §7.3). If LAN multicast is blocked, set RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+# + CYCLONEDDS_URI and list unicast peers in docker/cyclonedds.xml.
+
+name: sensing-node
+
+x-env: &env
+  ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-42}
+  RMW_IMPLEMENTATION: ${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
+  CYCLONEDDS_URI: ${CYCLONEDDS_URI:-}
+  GZ_PARTITION: ${GZ_PARTITION:-sensing}
+  # gz world name (pipeline | external bundle's <world name>) — set by
+  # `deploy.sh world`; scripts that touch /world/<name>/... topics read it.
+  SIM_WORLD_NAME: ${SIM_WORLD_NAME:-pipeline}
+  NVIDIA_VISIBLE_DEVICES: all
+  NVIDIA_DRIVER_CAPABILITIES: all   # graphics+compute → Gazebo ogre2 needs GL (PLAN §7.2)
+
+x-gpu: &gpu
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
+x-hardening: &hardening
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [NET_RAW]
+  # Share the host IPC namespace (/dev/shm) so FastDDS shared-memory transport
+  # works ACROSS containers. With network_mode:host, DDS discovery succeeds but
+  # same-host peers prefer SHM, and isolated per-container /dev/shm silently
+  # drops all data (talker publishes, listener hears nothing). PLAN §7.3.
+  ipc: host
+  shm_size: ${SHM_SIZE:-1gb}
+  pids_limit: ${PIDS_LIMIT:-4096}
+  cpus: "${CPUS:-8}"
+  mem_limit: ${MEM_LIMIT:-16g}
+  memswap_limit: ${MEM_LIMIT:-16g}
+
+services:
+  # ── the UGV sim + fusion (profile: compute) — headless GPU box ──────────
+  husky:
+    <<: [*gpu, *hardening]
+    profiles: [compute]
+    image: sensing-node/sim:local
+    build: { context: ., dockerfile: Dockerfile.sim }
+    network_mode: host
+    environment:
+      <<: *env
+      # External world bundle name under worlds_external/ (empty = pipeline
+      # world). Set via `deploy.sh world <bundle>`; see prepare_wildseed_world.sh.
+      SIM_WORLD: ${SIM_WORLD:-}
+    volumes:
+      - ../ros2_ws:/ros2_ws:ro
+      # robot.yaml mounted read-only; copied into a writable /clearpath at start
+      # because the Clearpath generators WRITE the generated description tree into
+      # setup_path (keeps generated files out of the repo).
+      - ../ros2_ws/src/sensing_bringup/config:/clearpath-src:ro
+      # prepared external world bundles (WildSeed): world.sdf + models/ + spawn.json
+      - ../worlds_external:/worlds_external:ro
+      - ./cyclonedds.xml:/etc/cyclonedds.xml:ro
+    # Clearpath Husky (Ouster OS1 + OAK-D stereo + Microstrain IMU, config/robot.yaml)
+    # in the off-road "pipeline" world (or a prepared WildSeed bundle via SIM_WORLD).
+    # ALL headless orchestration lives in the launch file (gz server-only so no GUI
+    # to crash; env for the gz_ros2_control plugin + world meshes; a CONDITION-based
+    # wait for the world before spawning, not fragile sleeps). See
+    # husky_sim.launch.py, docs/headless-gui.md, operations.md.
+    command: >
+      bash -lc "source /opt/ros/jazzy/setup.bash &&
+      exec ros2 launch /ros2_ws/src/sensing_bringup/launch/husky_sim.launch.py"
+
+  fusion:
+    <<: [*gpu, *hardening]
+    profiles: [compute]
+    image: sensing-node/fusion:local
+    build:
+      context: .
+      dockerfile: Dockerfile.fusion
+      args:
+        WITH_TORCH: "${WITH_TORCH:-0}"
+        TORCH_VARIANT: "${TORCH_VARIANT:-cu121}"
+    network_mode: host
+    environment:
+      <<: *env
+    volumes:
+      - ../ros2_ws:/ros2_ws
+      - ../results:/results
+      - ${DATASETS_DIR:-../datasets}:/datasets
+      - ./cyclonedds.xml:/etc/cyclonedds.xml:ro
+    # Placeholder: real fusion nodes land in Milestone 2+. Stays up so you can
+    # `deploy.sh shell fusion` and run evo / smoke checks against it.
+    command: bash -lc "source /opt/ros/jazzy/setup.bash && sleep infinity"
+
+  # ── M3 visual-inertial frontend (profile: vio) — OpenVINS + ground truth ─
+  # OpenVINS (MSCKF VIO) on the sim OAK-D + IMU -> /odomimu, consumed by
+  # ego_localizer's visual config. Separate profile so it's opt-in on top of
+  # `up compute`. See docs/m3-vio.md.  Start:  deploy.sh up vio   (with compute up)
+
+  # Blank-frame guard: drops near-uniform camera frames (the gz solid-colour-at-yaw
+  # artefact, sim-debugging-notes #8) so OpenVINS never tracks on a culled frame —
+  # it coasts on IMU through the gap instead. Republishes good frames to the
+  # _guarded topic that OpenVINS subscribes to. (fusion image = cv_bridge/numpy.)
+  camera_guard:
+    <<: *hardening
+    profiles: [vio]
+    image: sensing-node/fusion:local
+    network_mode: host
+    environment:
+      <<: *env
+    volumes:
+      - ../ros2_ws:/ros2_ws:ro
+      - ./cyclonedds.xml:/etc/cyclonedds.xml:ro
+    command: >
+      bash -lc "source /opt/ros/jazzy/setup.bash &&
+      exec python3 /ros2_ws/src/sensing_bringup/scripts/image_guard.py"
+
+  openvins:
+    <<: *hardening
+    profiles: [vio]
+    image: sensing-node/openvins:local
+    build: { context: ., dockerfile: Dockerfile.openvins }
+    network_mode: host
+    environment:
+      <<: *env
+    volumes:
+      - ../ros2_ws/src/sensing_bringup/config/openvins:/config:ro
+      - ./cyclonedds.xml:/etc/cyclonedds.xml:ro
+    command: >
+      bash -lc "source /ov_ws/install/setup.bash &&
+      exec ros2 run ov_msckf run_subscribe_msckf
+      --ros-args -p config_path:=/config/estimator_config.yaml"
+
+  # Ground-truth pose bridge: gz model pose -> ROS TF (for ATE/RPE vs truth).
+  # SIM_WORLD_NAME (written by `deploy.sh world` alongside SIM_WORLD) keeps the
+  # gz topic in step with the loaded world; default is the pipeline world.
+  gtbridge:
+    <<: *hardening
+    profiles: [vio]
+    image: sensing-node/sim:local
+    network_mode: host
+    environment:
+      <<: *env
+    command: >
+      bash -lc "source /opt/ros/jazzy/setup.bash &&
+      exec ros2 run ros_gz_bridge parameter_bridge
+      '/world/${SIM_WORLD_NAME:-pipeline}/dynamic_pose/info@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V'"
+
+  # ── minimal EGL render smoke (profile: render) — no Clearpath needed ─────
+  # The fastest "does GPU rendering work headless?" check, independent of the
+  # heavy Clearpath stack. `cd docker && docker compose --profile render up sim`
+  # (or `deploy.sh render`), then: gz topic -e -n1 -t /smoke/camera
+  sim:
+    <<: [*gpu, *hardening]
+    profiles: [render]
+    image: sensing-node/sim:local
+    network_mode: host
+    environment:
+      <<: *env
+    volumes:
+      - ../ros2_ws:/ros2_ws:ro
+      - ./cyclonedds.xml:/etc/cyclonedds.xml:ro
+    command: >
+      bash -lc "source /opt/ros/jazzy/setup.bash &&
+      gz sim -s -r -v3 --headless-rendering
+      /ros2_ws/src/sensing_bringup/worlds/smoke.sdf"
+
+  # ── where the human sits (profile: gui) — renders on the LOCAL GPU ──────
+  rviz:
+    <<: [*gpu, *hardening]
+    profiles: [gui]
+    image: sensing-node/sim:local
+    network_mode: host
+    environment:
+      <<: *env
+      DISPLAY: ${DISPLAY:-:0}
+      QT_X11_NO_MITSHM: "1"
+      # GUI apps need the NVIDIA *graphics* GL libs (compute-only caps -> MESA
+      # "Failed to query drm device" -> black/software 3D view).
+      NVIDIA_DRIVER_CAPABILITIES: all
+      NVIDIA_VISIBLE_DEVICES: all
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ./cyclonedds.xml:/etc/cyclonedds.xml:ro
+      - ../ros2_ws:/ros2_ws:ro
+    # Integrated-GPU DRM render node for MESA GL (hybrid laptops: X runs on iGPU).
+    devices:
+      - /dev/dri:/dev/dri
+    # TF remap is REQUIRED: the Clearpath robot publishes its whole TF tree
+    # (odom->base_link from robot_localization's ekf_node, + base_link->sensors)
+    # on the NAMESPACED /a200_0000/tf[_static]. RViz defaults to the global
+    # /tf[_static], where it would see nothing (Fixed Frame 'odom' "does not
+    # exist", lidar untransformable). Remap so RViz subscribes to the namespace.
+    # Two remaps, both required (see husky.rviz comments):
+    #  - /tf[_static] -> the /a200_0000 namespace (the robot's whole TF tree lives there).
+    #  - twist_server/{update,feedback} -> twist_marker_server/{...}: the teleop marker's
+    #    service is under twist_server but its topics under twist_marker_server (Clearpath
+    #    split), so RViz's drag feedback must be rerouted to where the node listens.
+    command: bash -lc "source /opt/ros/jazzy/setup.bash && rviz2 -d /ros2_ws/src/sensing_bringup/config/husky.rviz --ros-args -r /tf:=/a200_0000/tf -r /tf_static:=/a200_0000/tf_static -r /a200_0000/twist_server/feedback:=/a200_0000/twist_marker_server/feedback -r /a200_0000/twist_server/update:=/a200_0000/twist_marker_server/update"
+
+  gzgui:
+    <<: [*gpu, *hardening]
+    profiles: [gui]
+    image: sensing-node/sim:local
+    network_mode: host
+    environment:
+      <<: *env
+      DISPLAY: ${DISPLAY:-:0}
+      QT_X11_NO_MITSHM: "1"
+      # GUI apps need the NVIDIA *graphics* GL libs (compute-only caps -> MESA
+      # "Failed to query drm device" -> black/software 3D view).
+      NVIDIA_DRIVER_CAPABILITIES: all
+      NVIDIA_VISIBLE_DEVICES: all
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ../ros2_ws:/ros2_ws:ro
+    devices:
+      - /dev/dri:/dev/dri
+    # Connects to the headless `sim` server over gz-transport (set GZ_IP for
+    # cross-host — see docs/headless-gui.md).
+    command: bash -lc "source /opt/ros/jazzy/setup.bash && gz sim -g -v3"
+
+  # ── DDS smoke test (profile: smoke) ─────────────────────────────────────
+  talker:
+    <<: *hardening
+    profiles: [smoke]
+    image: sensing-node/sim:local
+    network_mode: host
+    environment:
+      <<: *env
+    volumes:
+      - ./cyclonedds.xml:/etc/cyclonedds.xml:ro
+    command: bash -lc "source /opt/ros/jazzy/setup.bash && ros2 run demo_nodes_cpp talker"
+
+  listener:
+    <<: *hardening
+    profiles: [smoke]
+    image: sensing-node/sim:local
+    network_mode: host
+    environment:
+      <<: *env
+    volumes:
+      - ./cyclonedds.xml:/etc/cyclonedds.xml:ro
+    command: bash -lc "source /opt/ros/jazzy/setup.bash && ros2 run demo_nodes_cpp listener"
+
+  # ── keyboard teleop (profile: teleop) — replaces the joystick ───────────
+  # Interactive: run via `deploy.sh teleop` (docker compose run, gives a TTY)
+  # over SSH, or on the laptop client over DDS. Publishes TwistStamped (the
+  # Husky's cmd_vel type) to the joy_teleop/cmd_vel twist_mux input (priority 10,
+  # the manual-override slot). NOTE: needs the controller stack working to
+  # actually move the robot — see docs/operations.md "Known issues".
+  #
+  # use_sim_time:=true so the node stamps each command with SIM-time now() (the
+  # /clock the husky service bridges reaches it over host-net DDS). Without it the
+  # node stamps WALL time, which is far-future vs sim time, so diff_drive's
+  # cmd_vel_timeout never fires and a single keypress latches motion "forever"
+  # (PLAN §N1 follow-up). With sim-time stamps the 0.5 s timeout works → the robot
+  # halts shortly after you stop sending (key-release / Ctrl-C). The bridged /clock
+  # MUST reach this node — if /clock is dead, sim-time stamps 0 and nothing moves.
+  teleop:
+    <<: *hardening
+    profiles: [teleop]
+    image: sensing-node/sim:local
+    network_mode: host
+    stdin_open: true
+    tty: true
+    environment:
+      <<: *env
+    volumes:
+      - ./cyclonedds.xml:/etc/cyclonedds.xml:ro
+    command: >
+      bash -lc "source /opt/ros/jazzy/setup.bash &&
+      ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args
+      -r /cmd_vel:=/a200_0000/joy_teleop/cmd_vel
+      -p stamped:=true -p frame_id:=base_link -p use_sim_time:=true"

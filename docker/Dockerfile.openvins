@@ -1,0 +1,62 @@
+# Sensing-node OPENVINS image — the visual-inertial odometry (VIO) frontend (M3).
+#
+# OpenVINS (rpng/open_vins) is an MSCKF filter-based VIO: it ingests camera
+# images + IMU and emits a 6-DoF odometry estimate. It has NO loop closure, so
+# its output is clean to fuse downstream (no retroactive trajectory jumps) — that
+# is exactly why the PLAN (§3.2) picks it over ORB-SLAM3 / VINS-Fusion.
+#
+# It is the ONE source build on the project's critical path (PLAN §14), so this
+# image is kept separate from the fast-building fusion image. OpenVINS runs in
+# its own container and publishes /ov_msckf/odomimu over DDS; `ego_localizer`
+# (the fusion image) consumes that topic — clean frontend/fusion separation.
+#
+# §17.1 WALL — build `master` ONLY: Ubuntu 24.04 ships Ceres 2.2, which removed
+# the deprecated `LocalParameterization` API that every tagged OpenVINS release
+# still uses. The fix (upstream PR #520, merged 2025-11-30) lives on `master`
+# and on NO release/develop_vX tag. A tagged checkout WILL fail to compile here.
+FROM ros:jazzy-perception
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Build deps. The perception base already carries OpenCV 4.6, Eigen and
+# cv_bridge; OpenVINS additionally needs Ceres (the MSCKF init solves a
+# bundle-adjustment) + its SuiteSparse/Boost backing. Pull build tooling too.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git build-essential cmake \
+        libeigen3-dev libceres-dev libsuitesparse-dev libboost-all-dev \
+        ros-jazzy-cv-bridge ros-jazzy-image-transport ros-jazzy-tf2-geometry-msgs \
+    && rm -rf /var/lib/apt/lists/*
+
+# §17.1 WALL #2 — the .h -> .hpp header rename. ROS 2 Jazzy renamed several public
+# C++ headers from .h to .hpp; OpenVINS master still includes the old .h spellings
+# (cv_bridge, image_transport, point_cloud2_iterator, tf2_geometry_msgs). These four
+# ship ONLY as .hpp here, so the compile fails on "No such file or directory". Drop
+# in thin forwarding shims (an old-name .h that just includes the new .hpp) so
+# OpenVINS builds unmodified — no patching its sources.
+RUN for h in cv_bridge/cv_bridge image_transport/image_transport \
+             sensor_msgs/point_cloud2_iterator tf2_geometry_msgs/tf2_geometry_msgs; do \
+        hpp=$(find /opt/ros/jazzy/include -path "*/$h.hpp" | head -1); \
+        [ -n "$hpp" ] && printf '#include "%s.hpp"\n' "$(basename $h)" > "${hpp%.hpp}.h"; \
+    done
+
+# Clone master (see §17.1 wall above) and record the exact commit so the build
+# is reproducible — printed during build and kept at /ov_ws/OPENVINS_COMMIT.
+# Pinned to a known-good master commit (PLAN §14: pin so it still builds in a year).
+ARG OPENVINS_COMMIT=69488123ed9362dd44b6f28e7f4680abbff1442b
+WORKDIR /ov_ws/src
+RUN git clone https://github.com/rpng/open_vins.git \
+    && git -C open_vins checkout "$OPENVINS_COMMIT" \
+    && git -C open_vins rev-parse HEAD | tee /ov_ws/OPENVINS_COMMIT
+
+# Build only what the live VIO node needs (+ ov_eval for the trajectory metrics).
+# ov_msckf pulls ov_core/ov_init transitively. Release build for real-time speed.
+WORKDIR /ov_ws
+RUN . /opt/ros/jazzy/setup.sh \
+    && colcon build \
+        --packages-up-to ov_msckf ov_eval \
+        --cmake-args -DCMAKE_BUILD_TYPE=Release \
+    && rm -rf build log
+
+RUN echo 'source /opt/ros/jazzy/setup.bash' >> /etc/bash.bashrc \
+    && echo 'source /ov_ws/install/setup.bash' >> /etc/bash.bashrc
+CMD ["bash"]

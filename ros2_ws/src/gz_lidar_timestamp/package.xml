@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>gz_lidar_timestamp</name>
+  <version>0.1.0</version>
+  <description>
+    Append per-point relative timestamps to a Gazebo gpu_lidar PointCloud2 so
+    lidar odometry (KISS-ICP / LIO-SAM / rko_lio) can deskew. Gazebo omits the
+    per-point time field; this node computes it from azimuth / column index and
+    the scan rate, then republishes. See PLAN §17.2.
+  </description>
+  <maintainer email="ricardo.azambuja@gmail.com">Ricardo de Azambuja</maintainer>
+  <license>Apache-2.0</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

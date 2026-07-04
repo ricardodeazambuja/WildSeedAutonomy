@@ -1,0 +1,5 @@
+# OAK-D Lite (RVC2 / Myriad X) — working depthai stack.
+# depthai 3.7.1 crashes the mono OV7251 camera (firmware regression); 3.6.1 is the
+# newest v3 that works. See OAK-D-Lite_camera_IMU_guide.md.
+depthai==3.6.1
+numpy==2.2.6

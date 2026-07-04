@@ -1,0 +1,96 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Property Tree Widget:
+      Expanded: ~
+Visualization Manager:
+  Class: ""
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: odom
+    Frame Rate: 30
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Cell Size: 1
+      Plane Cell Count: 40
+      Reference Frame: <Fixed Frame>
+      Color: 160; 160; 164
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: true
+      Show Names: true
+      Show Axes: true
+      Marker Scale: 0.6
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Ouster lidar3d
+      Enabled: true
+      Topic:
+        Value: /a200_0000/sensors/lidar3d_0/points
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Best Effort
+      Style: Points
+      Size (Pixels): 2
+      Color Transformer: AxisColor
+      Axis: Z
+      Decay Time: 0
+    - Class: rviz_default_plugins/Odometry
+      Name: Odometry
+      Enabled: true
+      Topic:
+        Value: /a200_0000/platform/odom
+        Depth: 10
+        Reliability Policy: Reliable
+      Keep: 1
+      Position Tolerance: 0.1
+      Angle Tolerance: 0.1
+      Shape:
+        Value: Arrow
+        Color: 255; 85; 0
+    - Class: rviz_default_plugins/Image
+      Name: OAK-D color
+      Enabled: true
+      Topic:
+        Value: /a200_0000/sensors/camera_0/color/image
+        Reliability Policy: Best Effort
+    # In-RViz teleop: drag this marker to drive — no extra terminal. Clearpath's
+    # twist_server_node (interactive_marker_twist_server) already runs with the
+    # robot and feeds twist_mux. Drag the 'move_x' arrow for forward/back, the
+    # 'rotate_z' ring to turn. Use the Interact tool (toolbar, hotkey 'i') to grab.
+    #
+    # NAMESPACE QUIRK (see compose rviz remaps): Clearpath SPLITS this server — its
+    # GetInteractiveMarkers *service* is under /a200_0000/twist_server (so the marker
+    # NAMESPACE must be that, or the arrows never appear), but its update/feedback
+    # *topics* are under /a200_0000/twist_marker_server. The compose 'rviz' command
+    # remaps twist_server/{update,feedback} -> twist_marker_server/{...} so the drag
+    # feedback actually reaches the node (else the marker moves but the robot doesn't).
+    - Class: rviz_default_plugins/InteractiveMarkers
+      Name: Teleop (drag to drive)
+      Enabled: true
+      Interactive Markers Namespace: /a200_0000/twist_server
+      Show Descriptions: true
+      Show Axes: false
+      Show Visual Aids: false
+  Tools:
+    - Class: rviz_default_plugins/Interact
+      Hide Inactive Objects: true
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Measure
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Current View
+      Distance: 18
+      Pitch: 0.5
+      Yaw: 0.78
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+Window Geometry:
+  Height: 900
+  Width: 1400
+  Hide Left Dock: false
+  Hide Right Dock: true

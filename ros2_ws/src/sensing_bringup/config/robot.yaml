@@ -1,0 +1,92 @@
+# Husky A200 — sensing-node simulation platform.
+#
+# Off-road skid-steer UGV carrying the three spine sensors (PLAN §5.1, §8):
+#   - Ouster OS1   3D lidar, mounted on top   → KISS-ICP lidar frontend
+#   - Luxonis OAK-D stereo+depth, front       → OpenVINS visual-inertial frontend
+#                                               (mirrors the REAL OAK-D for sim↔real)
+#   - Microstrain  IMU, on the body           → the spine IMU. Deliberately NOT the
+#                                               OAK-D's weak 6-axis BMI270 (PLAN §8/§17.4)
+#
+# Consumed by clearpath_gz:
+#   ros2 launch clearpath_gz simulation.launch.py world:=pipeline setup_path:=/clearpath/
+#
+# NOTE: sensors are parented to base_link with z/x offsets so they sit "on top"
+# / "in front" without depending on platform-specific mount frame names. To use
+# the Husky top plate / PACS mounts instead, change `parent` to that frame and
+# re-zero the offsets (verify frame names against the generated URDF).
+serial_number: a200-0000
+version: 0
+
+system:
+  hosts:
+    - hostname: cpr-a200-0000
+      ip: 127.0.0.1
+  ros2:
+    namespace: a200_0000
+    domain_id: 42                      # match ROS_DOMAIN_ID in .env
+    middleware:
+      implementation: rmw_fastrtps_cpp
+
+platform:
+  controller: ps4
+
+sensors:
+  lidar3d:
+    - model: ouster_os1
+      urdf_enabled: true
+      launch_enabled: true
+      parent: base_link
+      xyz: [0.0, 0.0, 0.40]            # on top of the Husky body
+      rpy: [0.0, 0.0, 0.0]
+  camera:
+    # STEREO PAIR (camera_0 = LEFT, camera_1 = RIGHT), 0.075 m baseline = the real
+    # OAK-D Lite stereo separation. Two model instances so clearpath_gz auto-bridges
+    # both color streams; OpenVINS runs stereo on them (use_stereo, max_cameras: 2).
+    # WHY STEREO: monocular VIO is scale-degenerate on a smooth planar UGV (the IMU
+    # never gets enough accel excitation), so mono OpenVINS wouldn't converge here;
+    # the stereo baseline makes depth/scale directly observable. The mount y-separation
+    # below MUST equal the kalibr cam0/cam1 p_CinI separation, or scale goes wrong.
+    # (Sim note: these are the IDEAL-pinhole COLOR cams; the real OAK-D Lite runs VIO
+    # on its mono global-shutter L/R pair. Fine proxy in sim where all cams are ideal.)
+    #
+    # Shared mount rationale (both cameras):
+    #  z=0.30 (was 0.20): MUST clear the A200 top deck (~0.245 m) or the deck enters
+    #    the frustum at diagonal yaws and trips a gz/ogre2 cull -> solid-colour frame
+    #    (docs/sim-debugging-notes.md "#8"; z<0.25 blanks, z>=0.25 clean).
+    #  rpy pitch -15 deg (0.2618 rad) DOWN: the pipeline world is textured on the
+    #    ground only; a level camera wastes ~half its 57 deg vertical FOV on sky.
+    #    +pitch about body-y drops the optical axis -> horizon ~24% from the top, the
+    #    rest trackable ground. Pitch is about body-y so the baseline stays along
+    #    body-y (= image x) -> a clean horizontal stereo baseline after the tilt.
+    #  EACH camera's xyz MUST stay in sync with its OpenVINS T_imu_cam p_CinI in
+    #    config/openvins/kalibr_imucam_chain.yaml.
+    - model: luxonis_oakd            # camera_0 = LEFT
+      urdf_enabled: true
+      launch_enabled: true
+      parent: base_link
+      xyz: [0.25, 0.0375, 0.30]      # +baseline/2 to robot-left
+      rpy: [0.0, 0.2618, 0.0]
+    - model: luxonis_oakd            # camera_1 = RIGHT
+      urdf_enabled: true
+      launch_enabled: true
+      parent: base_link
+      xyz: [0.25, -0.0375, 0.30]     # -baseline/2 to robot-right
+      rpy: [0.0, 0.2618, 0.0]
+  imu:
+    - model: microstrain_imu
+      urdf_enabled: true
+      launch_enabled: true
+      parent: base_link
+      xyz: [0.0, 0.0, 0.0]
+      rpy: [0.0, 0.0, 0.0]
+  gps:
+    # GNSS — the *droppable* absolute input for the GPS-denied keystone (PLAN §11/M5).
+    # Emits a gz `navsat` sensor (1 Hz) -> bridged to sensor_msgs/NavSatFix on
+    # sensors/gps_0/fix. The pipeline world already provides <spherical_coordinates>
+    # + the NavSat system plugin (no §17.2 world edit needed).
+    - model: swiftnav_duro
+      urdf_enabled: true
+      launch_enabled: true
+      parent: base_link
+      xyz: [0.0, 0.0, 0.45]
+      rpy: [0.0, 0.0, 0.0]

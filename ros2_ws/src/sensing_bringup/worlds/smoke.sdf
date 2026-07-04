@@ -1,0 +1,87 @@
+<?xml version="1.0" ?>
+<!--
+  Milestone-1 smoke world. Sole purpose: prove that HEADLESS GPU (EGL)
+  rendering works in the container by producing a camera image topic.
+
+  Run (inside the sim container, done for you by `deploy.sh up compute`):
+      gz sim -s -r --headless-rendering smoke.sdf
+  Verify:
+      gz topic -l | grep camera
+      gz topic -e -n1 -t /smoke/camera        # prints a non-empty image msg
+
+  This is a seed, not the real world — the OAK-D bundle, lidar, navsat and
+  magnetometer (PLAN §5.1) get composed here in later milestones.
+-->
+<sdf version="1.10">
+  <world name="smoke">
+    <physics name="1ms" type="ignored">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+
+    <plugin filename="gz-sim-physics-system"
+            name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-sensors-system"
+            name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="gz-sim-scene-broadcaster-system"
+            name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-user-commands-system"
+            name="gz::sim::systems::UserCommands"/>
+
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>1 1 1 1</diffuse>
+      <specular>0.5 0.5 0.5 1</specular>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry><plane><normal>0 0 1</normal><size>20 20</size></plane></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><plane><normal>0 0 1</normal><size>20 20</size></plane></geometry>
+          <material><ambient>0.3 0.3 0.3 1</ambient><diffuse>0.5 0.5 0.5 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="box">
+      <pose>0 0 0.5 0 0 0</pose>
+      <link name="link">
+        <inertial>
+          <mass>1.0</mass>
+          <inertia><ixx>0.16</ixx><iyy>0.16</iyy><izz>0.16</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+        </inertial>
+        <collision name="collision"><geometry><box><size>1 1 1</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>1 1 1</size></box></geometry>
+          <material><ambient>0.2 0.4 0.8 1</ambient><diffuse>0.2 0.4 0.8 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="camera">
+      <static>true</static>
+      <pose>-4 0 1.5 0 0.2 0</pose>
+      <link name="link">
+        <sensor name="camera" type="camera">
+          <topic>/smoke/camera</topic>
+          <update_rate>10</update_rate>
+          <always_on>1</always_on>
+          <visualize>true</visualize>
+          <camera>
+            <horizontal_fov>1.047</horizontal_fov>
+            <image><width>640</width><height>480</height><format>R8G8B8</format></image>
+            <clip><near>0.1</near><far>100</far></clip>
+          </camera>
+        </sensor>
+      </link>
+    </model>
+  </world>
+</sdf>

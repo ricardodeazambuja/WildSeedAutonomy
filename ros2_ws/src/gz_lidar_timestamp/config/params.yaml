@@ -1,0 +1,11 @@
+/gz_lidar_timestamp:
+  ros__parameters:
+    # Husky Ouster topic (gz-bridged PointCloud2, no per-point time).
+    input_topic: /a200_0000/sensors/lidar3d_0/points
+    output_topic: /a200_0000/sensors/lidar3d_0/points_with_time
+    scan_rate_hz: 10.0
+    profile: velodyne        # velodyne (time/float32 s) | ouster (t/uint32 ns)
+    method: auto             # auto | column | azimuth
+    time_reference: start    # start (t in [0,T)) | end (t in [-T,0))
+    clockwise: false         # lidar spin direction
+    azimuth_start_rad: -3.14159265   # reference azimuth for the azimuth method

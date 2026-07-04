@@ -1,0 +1,47 @@
+# --- Virtual environments (recreate from requirements.txt) ---
+oak-venv*/
+*venv*/
+.venv/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# --- ROS 2 colcon build artifacts ---
+build/
+install/
+log/
+
+# --- Datasets: hard-capped, NEVER commit (see PLAN §9.1) ---
+datasets/
+
+# --- Large data artifacts (rosbags etc.) anywhere ---
+*.bag
+*.db3
+*.db3-shm
+*.db3-wal
+*.mcap
+
+# --- results/ keeps small deliverables (traj.tum, metrics.csv, chart.png) ---
+# ...but never heavy bags inside it
+results/**/*.bag
+results/**/*.db3
+results/**/*.mcap
+
+# --- OS / editor ---
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# --- local project notes / auto-memory (never commit) ---
+MEMORY.md
+
+# --- per-host deploy config (committed: .env.example) ---
+.env
+# prepared external world bundles (WildSeed) — generated, big; keep .gitkeep
+worlds_external/*
+!worlds_external/.gitkeep

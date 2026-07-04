@@ -1,0 +1,23 @@
+%YAML:1.0
+# Sim Microstrain IMU. The sim IMU is near-ideal, but real-world noise densities
+# (EuRoC's MEMS values) are kept so OpenVINS doesn't over-trust it — a clean sim
+# would otherwise let tiny residuals dominate. ~58 Hz in sim-time (measured).
+imu0:
+  T_i_b:
+    - [1.0, 0.0, 0.0, 0.0]
+    - [0.0, 1.0, 0.0, 0.0]
+    - [0.0, 0.0, 1.0, 0.0]
+    - [0.0, 0.0, 0.0, 1.0]
+  accelerometer_noise_density: 2.0000e-3
+  accelerometer_random_walk: 3.0000e-3
+  gyroscope_noise_density: 1.6968e-04
+  gyroscope_random_walk: 1.9393e-05
+  rostopic: /a200_0000/sensors/imu_0/data
+  time_offset: 0.0
+  update_rate: 58.0
+  model: "kalibr"
+  Tw: [[1.0,0.0,0.0],[0.0,1.0,0.0],[0.0,0.0,1.0]]
+  R_IMUtoGYRO: [[1.0,0.0,0.0],[0.0,1.0,0.0],[0.0,0.0,1.0]]
+  Ta: [[1.0,0.0,0.0],[0.0,1.0,0.0],[0.0,0.0,1.0]]
+  R_IMUtoACC: [[1.0,0.0,0.0],[0.0,1.0,0.0],[0.0,0.0,1.0]]
+  Tg: [[0.0,0.0,0.0],[0.0,0.0,0.0],[0.0,0.0,0.0]]

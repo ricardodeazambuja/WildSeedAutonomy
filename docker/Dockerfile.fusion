@@ -1,0 +1,40 @@
+# Sensing-node FUSION / COMPUTE image (headless, no GUI).
+#
+# ROS 2 Jazzy 'perception' base — multi-arch (amd64 + arm64), so the same
+# Dockerfile retargets to a Jetson later by swapping the build platform.
+# Carries the light eval/fusion Python deps needed for Milestones 1–6.
+# GPU ML (torch + ultralytics) is OPT-IN via --build-arg WITH_TORCH=1; it is
+# not needed until Milestone 7, and keeping it off makes this image build fast
+# and clean on both the laptop (driver 535) and the server (driver 595).
+FROM ros:jazzy-perception
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG WITH_TORCH=0
+# cu121 = the floor for the laptop's driver 535; also valid on the server's 595.
+ARG TORCH_VARIANT=cu121
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3-pip python3-venv \
+        ros-jazzy-demo-nodes-cpp \
+    && rm -rf /var/lib/apt/lists/*
+
+# PLAN §17.1 (the day-one ABI wall): cv_bridge/rclpy in this image are built
+# against apt numpy 1.26 + OpenCV 4.6. Keep numpy < 2 and DO NOT pip-install
+# opencv-python, or they break. PEP 668 on Ubuntu 24.04 refuses system pip
+# installs → --break-system-packages, with deps pinned.
+RUN pip install --break-system-packages --no-cache-dir \
+        "numpy<2" scipy matplotlib evo rosbags
+
+# Optional GPU ML stack (Milestone 7). Isolated in a venv with
+# --system-site-packages so it can see apt rclpy/cv2, while its own
+# opencv/numpy cannot shadow them for the ROS runtime.
+RUN if [ "$WITH_TORCH" = "1" ]; then \
+      python3 -m venv --system-site-packages /opt/mlvenv && \
+      /opt/mlvenv/bin/pip install --no-cache-dir "numpy<2" \
+        torch torchvision --index-url "https://download.pytorch.org/whl/${TORCH_VARIANT}" && \
+      /opt/mlvenv/bin/pip install --no-cache-dir ultralytics && \
+      /opt/mlvenv/bin/pip uninstall -y opencv-python opencv-python-headless || true ; \
+    fi
+
+RUN echo 'source /opt/ros/jazzy/setup.bash' >> /etc/bash.bashrc
+CMD ["bash"]

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  CycloneDDS unicast config for multi-host discovery when LAN multicast is
+  blocked (PLAN §7.3). This file is mounted at /etc/cyclonedds.xml in every
+  ROS service but is INERT until you opt in via .env:
+
+      RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+      CYCLONEDDS_URI=file:///etc/cyclonedds.xml
+
+  Then uncomment the peer for each machine (server + laptop) below.
+  With the default FastDDS + host networking + a shared ROS_DOMAIN_ID, you do
+  NOT need this — it is the robust fallback only.
+-->
+<CycloneDDS xmlns="https://cdds.io/config"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:schemaLocation="https://cdds.io/config https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/master/etc/cyclonedds.xsd">
+  <Domain id="any">
+    <General>
+      <Interfaces>
+        <NetworkInterface autodetermine="true" priority="default" multicast="default" />
+      </Interfaces>
+      <AllowMulticast>false</AllowMulticast>
+    </General>
+    <Discovery>
+      <ParticipantIndex>auto</ParticipantIndex>
+      <Peers>
+        <Peer address="127.0.0.1" />
+        <!-- <Peer address="192.168.x.SERVER" /> -->
+        <!-- <Peer address="192.168.x.LAPTOP" /> -->
+      </Peers>
+    </Discovery>
+  </Domain>
+</CycloneDDS>

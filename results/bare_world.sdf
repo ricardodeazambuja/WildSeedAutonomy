@@ -1,0 +1,50 @@
+<?xml version="1.0" ?>
+<sdf version="1.10">
+  <world name="bare">
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+
+    <scene><ambient>1 1 1 1</ambient><background>0.3 0.7 0.9 1</background><grid>false</grid></scene>
+    <light name="sun" type="directional"><pose>0 0 10 0 0 0</pose><cast_shadows>false</cast_shadows>
+      <diffuse>1 1 1 1</diffuse><direction>-0.3 0.2 -0.9</direction></light>
+
+    <model name="ground"><static>true</static><link name="l">
+      <visual name="v"><geometry><plane><normal>0 0 1</normal><size>200 200</size></plane></geometry>
+        <material><diffuse>0.5 0.4 0.3 1</diffuse></material></visual></link></model>
+
+    <!-- a ring of boxes so a camera at ANY yaw sees geometry -->
+    <model name="b_e"><static>true</static><pose>8 0 1 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>2 2 2</size></box></geometry><material><diffuse>0.9 0.2 0.2 1</diffuse></material></visual></link></model>
+    <model name="b_ne"><static>true</static><pose>6 6 1 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>2 2 2</size></box></geometry><material><diffuse>0.2 0.9 0.2 1</diffuse></material></visual></link></model>
+    <model name="b_n"><static>true</static><pose>0 8 1 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>2 2 2</size></box></geometry><material><diffuse>0.2 0.2 0.9 1</diffuse></material></visual></link></model>
+    <model name="b_nw"><static>true</static><pose>-6 6 1 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>2 2 2</size></box></geometry><material><diffuse>0.9 0.9 0.2 1</diffuse></material></visual></link></model>
+    <model name="b_w"><static>true</static><pose>-8 0 1 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>2 2 2</size></box></geometry><material><diffuse>0.9 0.5 0.2 1</diffuse></material></visual></link></model>
+    <model name="b_sw"><static>true</static><pose>-6 -6 1 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>2 2 2</size></box></geometry><material><diffuse>0.5 0.2 0.9 1</diffuse></material></visual></link></model>
+    <model name="b_s"><static>true</static><pose>0 -8 1 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>2 2 2</size></box></geometry><material><diffuse>0.2 0.9 0.9 1</diffuse></material></visual></link></model>
+    <model name="b_se"><static>true</static><pose>6 -6 1 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>2 2 2</size></box></geometry><material><diffuse>0.9 0.2 0.9 1</diffuse></material></visual></link></model>
+
+    <!-- bare rgbd_cameras at fixed world yaws: 0 & 90 cardinal, 45 & 135 diagonal -->
+    <model name="cam_y0"><static>true</static><pose>0 0 1 0 0 0</pose><link name="l">
+      <sensor name="rgbd_camera" type="rgbd_camera"><topic>cy0</topic><always_on>1</always_on><update_rate>5</update_rate>
+        <camera><horizontal_fov>1.25</horizontal_fov><image><width>320</width><height>240</height></image>
+          <clip><near>0.3</near><far>100</far></clip>
+          <save enabled="true"><path>/results/bare_y0</path></save></camera></sensor></link></model>
+    <model name="cam_y45"><static>true</static><pose>0 0 1 0 0 0.7854</pose><link name="l">
+      <sensor name="rgbd_camera" type="rgbd_camera"><topic>cy45</topic><always_on>1</always_on><update_rate>5</update_rate>
+        <camera><horizontal_fov>1.25</horizontal_fov><image><width>320</width><height>240</height></image>
+          <clip><near>0.3</near><far>100</far></clip>
+          <save enabled="true"><path>/results/bare_y45</path></save></camera></sensor></link></model>
+    <model name="cam_y90"><static>true</static><pose>0 0 1 0 0 1.5708</pose><link name="l">
+      <sensor name="rgbd_camera" type="rgbd_camera"><topic>cy90</topic><always_on>1</always_on><update_rate>5</update_rate>
+        <camera><horizontal_fov>1.25</horizontal_fov><image><width>320</width><height>240</height></image>
+          <clip><near>0.3</near><far>100</far></clip>
+          <save enabled="true"><path>/results/bare_y90</path></save></camera></sensor></link></model>
+    <model name="cam_y135"><static>true</static><pose>0 0 1 0 0 2.3562</pose><link name="l">
+      <sensor name="rgbd_camera" type="rgbd_camera"><topic>cy135</topic><always_on>1</always_on><update_rate>5</update_rate>
+        <camera><horizontal_fov>1.25</horizontal_fov><image><width>320</width><height>240</height></image>
+          <clip><near>0.3</near><far>100</far></clip>
+          <save enabled="true"><path>/results/bare_y135</path></save></camera></sensor></link></model>
+  </world>
+</sdf>
