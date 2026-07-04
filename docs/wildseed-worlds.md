@@ -104,6 +104,15 @@ re-run `prepare_wildseed_world.sh`.
 - **Bundle right after generating.** `wildseed scenario/terraingen` overwrite
   `models/ground`; a world bundled against a *newer* terrain mesh gets wrong
   spawn heights and mismatched ground.
+- **Terrain slope is capped at generation (WildSeed ≥ `f1abe58`).** Scenario
+  worlds rescale relief to a mean surface slope of 20° (`--max-slope`, 0 =
+  off): older alpine seeds drew amplitude ≈ feature wavelength → mean mesh
+  slope 52°, >90 % of the map steeper than the Husky's ~20–25° gradeability —
+  the robot terrain-traps in the first gully. Worlds generated before the cap
+  must be **regenerated** (same seed → same layout, drivable relief; seed 42:
+  <25°-slope area 9 % → 76 %, drive progress 0.63 → 2.7 m per 12 s, m3-smoke
+  PASS). Diagnose a suspect world with the collision mesh: mean facet slope
+  over ~30° ⇒ regenerate.
 - **`<scale>` include warnings** at world load are expected (SDF `<include>`
   has no `<scale>`; gz copies it through) — they come from WildSeed's placement
   scaling and are harmless.

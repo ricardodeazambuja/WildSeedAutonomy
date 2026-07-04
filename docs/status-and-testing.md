@@ -430,6 +430,22 @@ soak wasn't run (below the practical floor; `SLOW_SIM_FACTOR` is the escape
 hatch there); **lidar recordings made before 512×32 are not comparable to new
 ones** (M4 hasn't started, so nothing recorded is invalidated).
 
+**Seed-42 terrain regenerated with the WildSeed slope cap (2026-07-04).**
+Interactive driving exposed that the alpine terrain was unnaturally steep —
+mean mesh slope **52.6°**, >90 % of the map beyond the Husky's ~20–25°
+gradeability (the `mountainous` preset drew amplitude ≈ feature wavelength);
+the robot terrain-trapped in the first gully (0.63 m progress per 12 s at
+0.8 m/s commanded). Fixed at the generator (WildSeed `f1abe58`): scenario
+worlds now rescale relief to a **20° mean surface slope** by default
+(`--max-slope`, exact — slope is linear in height scale; consumes no RNG, so
+the same seed keeps its layout). Regenerated + re-bundled `wildseed_42`:
+mean slope 52.6° → **18.1°**, Husky-traversable (<25°) area 9 % → **76 %**,
+relief 152 → 37.5 m, spawn z 145 → 36; drive test 0.63 → **2.7 m** per 12 s
+(uphill), RTF 0.69, **m3-smoke PASS** (98/95 corners). Also fixed en route:
+the Gazebo GUI needed the bundle models mounted + on its resource path
+(client-side mesh resolution — commit `30b4bc5`), or a bundle world shows as
+empty sky/grid while the sensor topics are fine.
+
 ## 5. Next steps — where the loop stops being laptop-closable
 
 The **priority next step is M4 sim-first** — the lidar frontend on the Husky's own
