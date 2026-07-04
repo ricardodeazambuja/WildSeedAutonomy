@@ -227,12 +227,14 @@ services:
       # "Failed to query drm device" -> black/software 3D view).
       NVIDIA_DRIVER_CAPABILITIES: all
       NVIDIA_VISIBLE_DEVICES: all
-      # The GUI renders meshes CLIENT-side: it gets entity poses + model://
-      # URIs over gz-transport and must resolve the meshes itself. Without the
-      # bundle's models on the resource path a WildSeed world shows as sky +
-      # empty grid (every mesh silently fails to load) while the headless
-      # server — and thus camera/lidar topics — are perfectly fine.
-      GZ_SIM_RESOURCE_PATH: /worlds_external/${SIM_WORLD:-}/models
+      # The GUI renders meshes CLIENT-side: it gets entity poses + model:///
+      # package:// URIs over gz-transport and must resolve the meshes itself —
+      # every miss is SILENT. Mirror the server launch's resource path:
+      #  - the bundle's models/        (WildSeed worlds; else sky + empty grid)
+      #  - /opt/ros/jazzy/share        (package://clearpath_* robot meshes;
+      #                                 else the world renders but NO Husky)
+      #  - clearpath_gz worlds+meshes  (the pipeline world's model://pipeline)
+      GZ_SIM_RESOURCE_PATH: /worlds_external/${SIM_WORLD:-}/models:/opt/ros/jazzy/share:/opt/ros/jazzy/share/clearpath_gz/meshes:/opt/ros/jazzy/share/clearpath_gz/worlds
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ../ros2_ws:/ros2_ws:ro
