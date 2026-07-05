@@ -81,7 +81,7 @@ laptop-deterministic.
 ### Tier 2 — The live sim (visual)
 
 ```bash
-./scripts/deploy.sh viz        # sim + RViz + Gazebo GUI, all local
+./scripts/deploy.sh viz        # sim + RViz, all local (add --gz for the Gazebo GUI)
 ./scripts/deploy.sh teleop     # drive the Husky with the keyboard (separate shell)
 ./scripts/deploy.sh down       # stop everything
 ```
@@ -169,7 +169,7 @@ stack alone — a path that hadn't been exercised end-to-end before. It now has 
 | `deploy.sh smoke` | cross‑container DDS (talker→listener) on localhost |
 | `deploy.sh render` | **EGL headless render on the dGPU** — `/smoke/camera` emits 640×480 RGB |
 | `diag_sim.sh` | controllers up ~6 s, sensors live, `/clock` 1 pub ~461 Hz, odom ~10 Hz, **movement** (odom x 0 → 1.57 m) |
-| `deploy.sh viz` | **RViz `OpenGl version: 4.6` — hardware GL** (no MESA fallback) + Gazebo GUI, on the local GPU |
+| `deploy.sh viz` | **RViz `OpenGl version: 4.6` — hardware GL** (no MESA fallback) + Gazebo GUI (now opt-in via `viz --gz`), on the local GPU |
 
 ### What changed (laptop-only bring-up session)
 - **`scripts/remote.sh` guards against a missing server.** When the configured server is

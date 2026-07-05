@@ -33,11 +33,13 @@ GPU** and never streams pixels for the normal workflow.
 ## The two one-command workflows
 
 ```bash
-./scripts/deploy.sh viz       # (A) sim LOCAL + RViz + Gazebo GUI — all on this box
+./scripts/deploy.sh viz       # (A) sim LOCAL + RViz — all on this box (add --gz for the Gazebo GUI)
 ./scripts/remote.sh viz       # (B) sim on the SERVER + RViz on the laptop (over DDS)
 ```
-- **(A) all-local** brings up `husky` + `rviz` + `gzgui` (skips fusion). Full Gazebo
-  GUI available. Drive with `deploy.sh teleop`, stop with `deploy.sh down`.
+- **(A) all-local** brings up `husky` + `rviz` (skips fusion). Add `--gz` to also open
+  the Gazebo GUI client (`gzgui`) — RViz alone shows everything that comes over ROS
+  topics (lidar, camera, TF, teleop marker); the Gazebo window only adds the sim's own
+  3D world view. Drive with `deploy.sh teleop`, stop with `deploy.sh down`.
 - **(B) server + laptop** runs `deploy.sh up compute` on the server over SSH and a
   **local RViz** that sees the server's topics over DDS. Drive with
   `remote.sh teleop`, stop with `remote.sh viz-stop`. **RViz only** — the cross-host

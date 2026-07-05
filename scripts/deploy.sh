@@ -14,7 +14,7 @@
 #   ./deploy.sh render               minimal headless EGL render check (smoke world)
 #   ./deploy.sh teleop               interactive keyboard teleop (SSH: ssh -t; or laptop)
 #   ./deploy.sh estop on|off         engage/release the twist_mux e-stop (latches!)
-#   ./deploy.sh viz                  LOCAL live view: sim + RViz + Gazebo GUI (no fusion)
+#   ./deploy.sh viz [--gz]           LOCAL live view: sim + RViz (no fusion); --gz adds the Gazebo GUI
 #   ./deploy.sh logs [svc]           follow logs
 #   ./deploy.sh shell <svc>          open a shell in a (new) container
 #   ./deploy.sh set --cpus N --mem Xg   edit resource caps in .env
@@ -122,12 +122,19 @@ cmd_estop() { # engage/release the twist_mux e_stop lock: deploy.sh estop on|off
   esac
 }
 
-cmd_viz() { # LOCAL live visualization (workflow A, laptop-only): sim + RViz (preloaded) + Gazebo GUI
-  need_env                                       # brings up only husky+rviz+gzgui (NO fusion)
+cmd_viz() { # LOCAL live visualization (workflow A, laptop-only): sim + RViz (preloaded); NO fusion
+  need_env                                       # default husky+rviz; add --gz for the Gazebo GUI
+  local services="husky rviz" label="husky (sim) + RViz"
+  if [ "${1:-}" = "--gz" ]; then
+    services="husky rviz gzgui"; label="husky (sim) + RViz + Gazebo GUI"
+  elif [ -n "${1:-}" ]; then
+    echo "usage: deploy.sh viz [--gz]   (--gz also opens the Gazebo GUI client)" >&2; return 2
+  fi
   command -v xhost >/dev/null 2>&1 && xhost +local: >/dev/null 2>&1 || \
     echo "(note: xhost not available — GUI may be denied X access)"
-  dc --profile compute --profile gui up -d husky rviz gzgui
-  echo "── viz up: husky (sim) + RViz + Gazebo GUI on the local GPU ──"
+  # shellcheck disable=SC2086
+  dc --profile compute --profile gui up -d $services
+  echo "── viz up: $label on the local GPU ──"
   echo "   drive it:  drag the 'Teleop' marker in RViz (Interact tool / 'i'), OR ./scripts/deploy.sh teleop"
   echo "   stop all:  ./scripts/deploy.sh down"
   echo "   (RViz loads config/husky.rviz: lidar + odom + TF + camera + teleop marker, fixed frame 'odom')"
