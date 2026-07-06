@@ -18,6 +18,17 @@ in [`docs/PLAN.md`](docs/PLAN.md).
 > verification log. (Headline so far: infra, teleop, the EKF core, stereo VIO
 > sim-first, and the GPS-denied drift→reacquire keystone are done, laptop-verified.)
 
+<p align="center">
+  <img src="results/vio_lio_recipe_vs_bare.png" alt="M3 stereo-VIO ATE on a WildSeed vio_lio recipe world vs a bare world" width="760">
+</p>
+
+*M3 stereo-VIO (OpenVINS + `ego_localizer`) driven over a **seeded** WildSeed
+`vio_lio` recipe world vs a same-seed bare/uniform world. The recipe's steered
+landmark density + drivable relief cut VIO drift ~⅓ (raw-OpenVINS ATE 0.092 m bare
+→ 0.063 m recipe, consistent across 2 runs); RTF holds ≈0.99 under the full node
+graph. Full method
++ numbers + the knob sweep: [`results/vio_lio_recipe_eval.md`](results/vio_lio_recipe_eval.md).*
+
 ## What's here
 
 | Path | Purpose |
