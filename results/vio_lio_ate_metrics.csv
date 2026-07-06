@@ -1,0 +1,7 @@
+world,run,harness,ate_openvins_raw_m,ate_ego_localizer_m,gt_path_m,drive_rtf,notes
+vio_lio_recipe,1,clean-ordering,0.040,0.045,22.61,0.99,165 obj + relief + patchy ground
+vio_lio_recipe,2,clean-ordering,0.086,0.060,22.61,0.98,repeat
+vio_lio_bare,1,clean-ordering,0.070,0.068,22.59,1.00,flat uniform 0 obj (same seed 7)
+vio_lio_bare,2,clean-ordering,0.114,0.088,22.58,0.99,repeat
+pipeline,1,clean-ordering,0.237,0.240,23.55,1.00,Clearpath default control (sanity anchor)
+vio_lio_recipe,0,BUGGY-openvins-during-load,192.365,195.979,22.59,0.66,DIVERGED — OpenVINS inited during slow world-load; see md

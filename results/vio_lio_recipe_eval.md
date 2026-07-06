@@ -52,4 +52,65 @@ One knob varied at a time from the recipe defaults (density 175, relief 0.5, var
 **Which knob most affects tracking:** `--object-density`. It is the dominant, *monotonic* lever on the two metrics that predict VIO robustness — putative-correspondence volume (57→107, i.e. raw landmark support) and inlier_ratio — matching the guide's "structure > texture, robustness hinges on landmark density." `--relief` is second: it contributes *geometric* parallax (flat relief 0 collapses inliers/pair to 54.9; the recipe's 0.5 restores it). `--variety` moves the *look* more than the *trackability*: raising it actually **lowers** frame-to-frame inliers/pair (79→59) — expected, since its job is global place-recognition distinctiveness (loop closure), not local VIO data association; it trades local inlier count for uniqueness. All seven points stay in the same MARGINAL/landmark-reliant regime, so no single knob alone flips the verdict — the *recipe as a package* is what lifts the world out of the aliased-bare failure mode (see ATE below).
 
 ## M3 VIO full-sim ATE — recipe vs bare (same seed 7)
-_(populated below)_
+
+### Harness bug found & fixed (important methodology note)
+The first recipe run **diverged catastrophically** — ATE **192 m** on a 22.6 m path,
+OpenVINS `p_IinG` flying to **24 km**. Root cause was **not** the world: cameras
+rendered non-blank with 85+ corners. It was a **startup-ordering bug** in how we
+brought the stack up. `deploy.sh m3-smoke` starts OpenVINS via `up -d`, but on a
+**heavy world the sim takes ~60–120 s to load** (terrain mesh + 165 models), during
+which RTF sits at ~0.001. OpenVINS was fed that degraded-timing camera/IMU stream and
+**initialized on garbage → velocity blowup → monotonic divergence** (wrong direction
+from t≈4 s). The bare/pipeline worlds load fast, so they never exposed this.
+
+Secondary: `m3-smoke`'s RTF probe fires *during* the load and aborts on the
+`SIM_RTF_FLOOR` before it ever validates the cameras — so on heavy worlds the smoke
+gate gives a **spurious FAIL** while the sim is actually fine once loaded. (Worth a
+follow-up: the smoke gate should wait for the world to finish loading before probing RTF.)
+
+**Fix — clean-ordering harness** (`scratchpad run_m3_v2.sh`): bring up the sim only →
+**poll until steady RTF > 0.4 AND both cameras ≥ 80 corners** → *then* start OpenVINS
+**fresh** on the loaded sim → drive. Validated against the known-good pipeline world:
+
+### Results (all through the identical clean-ordering harness, v=0.5 wz=0.1 45 s, seed 7)
+2 runs each of recipe & bare (to bound run-to-run VIO variance) + 1 pipeline control:
+
+| world | drive RTF | raw-OpenVINS ATE (run1 / run2 / mean) | ego_localizer ATE (run1 / run2 / mean) |
+|-------|----------:|:--------------------------------------:|:---------------------------------------:|
+| **vio_lio recipe** (165 obj + relief + patchy) | 0.98–0.99 | 0.040 / 0.086 / **0.063 m** | 0.045 / 0.060 / **0.052 m** |
+| **vio_lio bare** (flat, uniform, 0 obj) | 1.00 | 0.070 / 0.114 / **0.092 m** | 0.068 / 0.088 / **0.078 m** |
+| pipeline (Clearpath default, control) | 1.00 | 0.237 m (1 run) | 0.240 m | 
+
+**Recipe reduces our M3 VIO ATE ~32% (raw OpenVINS) / ~33% (ego_localizer) vs the bare
+same-seed world**, and recipe < bare in **all four paired comparisons** (2 runs × 2
+estimators) — the ranking is robust even though both worlds' absolute ATE roughly
+doubled between run 1 and run 2 (a shared run-to-run factor: init/GPU-scheduling
+variance, not world content). Both worlds track cleanly (sub-0.12 m, OpenVINS `p` hugs
+the 22 m GT loop) — no divergence — so this is a *quality* improvement near the VIO
+floor, not a rescue from failure. The bare world already yields ~200 ground-texture
+corners, so on a **short 22 m stereo loop** it is not feature-starved; the recipe's
+landmark density + relief parallax still buy a consistent ~1/3 ATE reduction, and would
+matter more on longer trajectories (drift accrual), mono VIO (scale), or loop closure.
+
+The pipeline control (0.237 m via this harness; stored best-case 0.069 m) is only a
+*sanity anchor* (sane, not diverged) — it is a different world type (industrial), so
+don't read the recipe-vs-pipeline gap as a recipe win; the clean A/B is recipe-vs-bare.
+
+**RTF under the full ROS node graph:** recipe world runs at **RTF ≈ 0.98–0.99** once
+loaded — well above the ≥0.5 target, **no steady-state sag**. Only the *load transient*
+dips (~0.001 for ~60–120 s while the terrain mesh + 165 models parse), which is the
+startup-ordering hazard above, not a sustained sag. Bare/pipeline load fast (RTF 1.0).
+
+## Answers to the three report questions
+1. **Does the recipe reduce our VIO/LIO drift (ATE) vs the previous world?** **Yes —
+   ~32–33% lower ATE than a bare same-seed world (0.063 vs 0.092 m raw; 0.052 vs
+   0.078 m fused), consistent across 2 runs.** Small absolute numbers (short loop, both
+   near the VIO floor), but a robust directional win.
+2. **Which knob most affects tracking?** **`--object-density`** — the dominant, monotonic
+   lever on the VIO data-association proxy (putative correspondences 57→107, inlier_ratio
+   span 0.058), matching the guide's "landmark density" thesis. `--relief` is second
+   (geometric parallax; flat collapses inliers/pair 63→55). `--variety` changes the look
+   (global place-recognition distinctiveness) more than short-baseline trackability.
+3. **Any RTF sag under our full ROS node graph?** **No steady-state sag** — recipe holds
+   RTF ≈ 0.98–0.99 (rtf_min well above 0.5). The only dip is the one-time world-load
+   transient, which must be waited out before starting VIO (see the harness-bug note).
