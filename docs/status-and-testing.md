@@ -19,7 +19,7 @@ roadmap (PLAN §12) and the navigation milestones (PLAN §18):
 | **M2** — `fusion_core` ROS-free EKF library | ✅ done (14 pytest green) |
 | **M3** — visual frontend: stereo OpenVINS VIO → `ego_localizer` | ✅ **done sim-first** (raw ATE 0.069 m / fused 0.077 m vs gz truth) — [`m3-vio.md`](m3-vio.md); **M3b** (EuRoC real-imagery comparison) deferred, needs download |
 | **eval_tools** — ATE/RPE metrics + chart CLI | ✅ done (the "money-chart" backbone) |
-| **GPS-denied keystone (in sim)** | ✅ **demonstrated end-to-end** — `results/gps_denied_keystone.png`: mean \|ego − GPS\| **on = 0.12 m → denied = 0.20 m → reacquire = 0.14 m** |
+| **GPS-denied keystone (in sim)** | ✅ **demonstrated end-to-end** — `results/gps_denied_keystone.png`: mean \|ego − GPS\| **on = 0.12 m → denied = 0.20 m → reacquire = 0.14 m**; ✅ **re-verified on WildSeed procedural terrain** — `results/gps_denied_wildseed.png` (wildseed_42, RTF 0.6): err **0.07 → 0.61 m over a 16 m denied stretch → snaps back to 0.07 m** |
 | **WildSeed procedural worlds** | ✅ integrated + verified (m3-smoke PASS on `scenario --seed 42`) — [`wildseed-worlds.md`](wildseed-worlds.md) |
 | **M4** — lidar frontend: KISS-ICP → `ego_localizer` lidar hook | ✅ **done sim-first** (raw LIO ATE 0.99 m/RPE 0.26 m pipeline · RPE 0.10 m WildSeed forest; fused tracks raw; VIO A/B same-run) — [`m4-lio.md`](m4-lio.md); **M4 real-lidar tier** (NTU VIRAL) deferred, needs download |
 | M5–M12 | not started; **priority next = M5-keystone-on-WildSeed + terrain sweep + M6 GTSAM** (all laptop-closable) — §5 |
@@ -487,6 +487,23 @@ caveats:* fused-LIO tracks its raw input (a relative-only filter cannot
 correct a biased frontend); recipe-world ATE varies 2.3–4.0 m run-to-run as
 the bias integrates path-dependently (RPE stable 0.06–0.10) — cross-world
 comparisons should read RPE.
+
+**M5-keystone re-run on WildSeed procedural terrain (2026-07-06,
+`results/gps_denied_wildseed.png`).** The GPS-denied drift→reacquire demo,
+previously verified on the hand-made pipeline world, now passes on the
+`wildseed_42` bundle (alpine scenario, RTF 0.60): with the same protocol
+(0.4 m/s, 40 sim-s denial) the error envelope rises **0.07 → 0.61 m across a
+16.2 m dead-reckoned stretch (3.8 % of distance) and snaps back to 0.07 m at
+reacquisition**; phase means on = 0.250 / denied = 0.368 / reacq = 0.212 m
+(rows = 1304). The NavSat + `<spherical_coordinates>` shell-injection done by
+`prepare_wildseed_world.sh` is what makes this work on any bundle unchanged.
+Absolute drift is milder than the pipeline reference (denied mean 1.59 m
+there) — dead-reckoning error is terrain-dependent; the qualitative keystone
+(bounded → drift → snap back) is what the milestone claims. New:
+`scripts/m5_keystone_eval.sh` (same steady-RTF bring-up gate as the M4 eval;
+one-shot: world → gate → ego GNSS config → drive → chart). Optional keystone
+polish (GPS 10 Hz, magnetometer, dual-EKF `map→odom`) remains open in §5 —
+none blocking.
 
 ## 5. Next steps — where the loop stops being laptop-closable
 
