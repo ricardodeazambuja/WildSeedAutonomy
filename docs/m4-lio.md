@@ -103,6 +103,36 @@ its drift. The fused LIO output tracks its raw input (the fusion does not
 degrade its best source once σ is fit from data) — with only relative sources,
 no filter can *correct* a biased frontend; that is GNSS's job (M5).
 
+## Terrain-complexity sweep — VIO vs LIO vs fused across worlds
+
+`results/m4_terrain_sweep.png` — the same drive and spine on four worlds
+(pipeline + three WildSeed bundles; `plot_m4_sweep.py` aggregates the
+per-world metrics CSVs):
+
+| world | raw VIO ATE/RPE | raw LIO ATE/RPE | fused-LIO ATE/RPE |
+|---|---|---|---|
+| pipeline (structured flat) | 0.045 / 0.006 | 0.985 / 0.263 | 1.029 / 0.269 |
+| open terrain (`vio_lio_bare`) | 0.097 / 0.006 | 1.928 / 0.116 | 2.727 / 0.142 |
+| forest (`vio_lio_recipe`) | 0.046 / 0.006 | 4.008 / 0.100 | 3.856 / 0.101 |
+| alpine (`wildseed_42`) | **45.0 / 1.83 — DIVERGED** | 5.358 / 0.464 | 4.993 / 0.616 |
+
+**The headline is complementary failure modes.** On alpine terrain the stereo
+VIO *diverges* (position runs to 150+ m on IMU dead-reckoning while heading
+stays sane — the m3-vio.md starvation signature): verified cause is **texture
+starvation along the route** — at a mid-terrain pose both cameras render fine
+(std ≈ 48) but yield only **57–58 Shi-Tomasi corners, under the 80-corner KLT
+floor** (the spawn point had 98/95, so a spawn-point texture gate passes; the
+*drive* crosses starved patches — texture is a runtime property, measured this
+time). The lidar frontend keeps working exactly there. Conversely, lidar local
+consistency is best in the forest (RPE 0.100) and worst on the alpine slopes
+(0.464), while VIO is superb wherever texture exists. **No single frontend
+survives all terrains — the case for the multi-frontend spine + absolute
+anchoring (M5), made with numbers instead of assertion.**
+
+Reading guidance: compare RPE across worlds (local odometry quality); ATE
+integrates the slow-UGV under-report bias path-dependently (war story #5) and
+mostly reflects how that bias happened to accumulate.
+
 ## The M4 war stories (what actually bit, in order)
 
 Each was diagnosed from the recorded CSVs (path lengths, update cadence,

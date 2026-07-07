@@ -505,6 +505,20 @@ one-shot: world → gate → ego GNSS config → drive → chart). Optional keys
 polish (GPS 10 Hz, magnetometer, dual-EKF `map→odom`) remains open in §5 —
 none blocking.
 
+**Terrain-complexity sweep — VIO vs LIO vs fused across four worlds
+(2026-07-07, `results/m4_terrain_sweep.png`).** Same drive + spine on pipeline
+/ `vio_lio_bare` (open) / `vio_lio_recipe` (forest) / `wildseed_42` (alpine).
+**Headline: complementary failure modes, measured.** The stereo VIO is superb
+wherever texture exists (ATE 0.045–0.097 m) but **diverges on the alpine
+world (45 m)** — verified texture starvation: a mid-route probe shows healthy
+frames (std≈48) with only **57–58 corners, under the 80-corner KLT floor**
+(spawn-point gate had 98/95 — texture is a runtime property, now measured).
+The lidar frontend keeps working exactly there (5.36 m, fused 4.99 m). Lidar
+local consistency is best in the forest (RPE 0.100) and worst on alpine
+slopes (0.464). No single frontend survives all terrains — the
+multi-frontend-spine + absolute-anchoring thesis with numbers. Sweep details
++ reading guidance (RPE vs ATE): [`m4-lio.md`](m4-lio.md).
+
 ## 5. Next steps — where the loop stops being laptop-closable
 
 **M4 sim-first is done (§4).** The remaining laptop-closable arc is: **M5
