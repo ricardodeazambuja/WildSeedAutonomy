@@ -10,6 +10,16 @@ healthy fusion should look like instead, and the **mitigation/improvement** path
 The point: don't discover these on real data — **manufacture them in Gazebo**,
 where we have **perfect ground-truth pose** to measure against.
 
+> **M4 status (2026-07-07): measured.** Mode **#1** materialized on its own in
+> the four-world terrain sweep (`results/m4_terrain_sweep.png`), and the M4
+> bring-up surfaced **two modes this catalogue didn't predict**: (a) the
+> **slow-UGV translation under-report bias** (~40–60 % across every
+> rate/voxel/threshold/world — per-scan motion sits below KISS-ICP's
+> automotive design regime; read RPE, not ATE, across worlds) and (b)
+> **adaptive-threshold collapse when stationary** if `min_motion_th` is
+> lowered (the pose freezes at the origin once motion starts). Numbers, the
+> ruled-out hypotheses, and the final config: [`m4-lio.md`](m4-lio.md).
+
 ## Test rig (applies to every mode below)
 - **Ground truth:** Gazebo publishes the robot's true pose. Log KISS-ICP `/odom`
   vs GT and compute **ATE / RPE with `evo`** (PLAN §3.2 tooling).

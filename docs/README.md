@@ -31,8 +31,12 @@ to it instead of copying, so updates happen in exactly one place.
   message rules, top-5 "GPS fusion silently wrong" causes + fixes.
 - [`m3-vio.md`](m3-vio.md) — M3 stereo OpenVINS VIO on the sim: pipeline, how to
   run, the `m3-smoke` gate, results (ATE 0.069 m raw / 0.077 m fused).
+- [`m4-lio.md`](m4-lio.md) — M4 KISS-ICP lidar odometry on the sim: pipeline, the
+  `m4-smoke` gate, the VIO-vs-LIO A/B, the four-world terrain sweep
+  (complementary failure modes), and the bring-up war stories.
 - [`kiss-icp-failure-modes.md`](kiss-icp-failure-modes.md) — where KISS-ICP breaks
-  and how M4 provokes & measures each failure in sim.
+  and how M4 provokes & measures each failure in sim; measured outcomes + two
+  newly discovered modes are in [`m4-lio.md`](m4-lio.md).
 - [`costmap-deep-dive.md`](costmap-deep-dive.md) — how the Nav2 2D costmap is
   built/updated from the Ouster + OAK-D; the off-road/traversability problem.
 

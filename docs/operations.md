@@ -44,6 +44,8 @@ from the host. Re-tune later without editing by hand:
 | `compute` | `husky` (Clearpath Husky in the off-road `pipeline` world, headless) + `fusion` | the GPU box (server) |
 | `gui` | `rviz` + `gzgui` (render locally) | the machine you sit at |
 | `all` | compute + gui together | laptop-only |
+| `vio` | `openvins` + `camera_guard` + `gtbridge` — the M3 visual frontend, opt-in on top of `compute` (`deploy.sh up vio`) | with compute |
+| `lio` | `kissicp` + `cloud_decimator` + `gtbridge` — the M4 lidar frontend, opt-in on top of `compute` (`deploy.sh up lio`) | with compute |
 
 Plus a standalone `render` profile (not tied to a ROLE): `deploy.sh render` runs
 the minimal `smoke.sdf` world — the fastest GPU-render check, independent of the
@@ -106,9 +108,9 @@ RTF 0.04 = 1 sim-second takes 25 wall-seconds. Weak machines and dense
 ```
 
 **The sim-seconds contract.** Everything *inside* the ROS graph runs on sim
-time and scales gracefully. The demos and smoke gates (`m3-smoke`,
-`gps_denied_demo.py`, `m3_vio_demo.py`, the N1 demo) define **all durations in
-SIM seconds** and self-report the measured RTF: at RTF 0.1 a "40 s" demo takes
+time and scales gracefully. The demos and smoke gates (`m3-smoke`, `m4-smoke`,
+`gps_denied_demo.py`, `m3_vio_demo.py`, `m4_lio_demo.py`, the N1 demo) define
+**all durations in SIM seconds** and self-report the measured RTF: at RTF 0.1 a "40 s" demo takes
 ~400 wall-seconds but drives the identical path and records the identical
 physics. They abort with a clear message if RTF < `SIM_RTF_FLOOR` (`.env`,
 default 0.02 — below that the sim isn't meaningfully interactive).

@@ -95,6 +95,12 @@ re-run `prepare_wildseed_world.sh`.
   sensors cost ~half the throughput** — hence the OS1 512×32 default in
   `Dockerfile.sim`. `prepare_wildseed_world.sh` bakes the evidence in
   (labels stripped + step 0.002 by default, via `tune_world_bundle.sh`).
+  **Correction (M4, 2026-07-06):** the original 512×32 *xacro* sed was a
+  **silent no-op** — the Clearpath description *generator* hard-codes
+  1024×64 into the generated URDF over the xacro defaults, so the RTF gains
+  in this table came from step-size + labels alone. The cut is real since
+  the generator patch (note in `Dockerfile.sim`; [`m4-lio.md`](m4-lio.md)
+  war story #2).
 - **Heavy worlds load slowly.** A dense WildSeed world is thousands of mesh
   includes; the world-ready poll backstop is 180 s. If the spawn still races,
   check `deploy.sh logs husky` for the `/world/<name>/create` service.

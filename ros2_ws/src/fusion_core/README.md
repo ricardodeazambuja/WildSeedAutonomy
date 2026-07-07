@@ -1,15 +1,17 @@
 # fusion_core
 
-ROS-free estimation library (numpy only) — the shared filter the fusion nodes
-wrap. PLAN §5/§6, **milestone 2**. Zero ROS deps → unit-testable in
-milliseconds and a 10-minute read that stands on its own.
+ROS-free estimation library — the shared estimation core the fusion nodes
+wrap. PLAN §5/§6, **milestone 2** (EKF, numpy only) + **milestone 6** (the
+GTSAM factor-graph variant, optional `gtsam` wheel). Zero ROS deps →
+unit-testable in milliseconds and a 10-minute read that stands on its own.
 
 ## What's here
 | File | Purpose |
 |---|---|
 | `fusion_core/ekf.py` | generic (E)KF: `predict(F, Q)` + `update(z, H, R)`, Joseph-form covariance, NIS + Mahalanobis gating |
 | `fusion_core/models.py` | constant-velocity transition `F`, white-noise-acceleration `Q`, position measurement `H`/`R` |
-| `test/` | pytest: covariance behaviour, Joseph PSD invariance, convergence, *filter-beats-raw-measurements* RMSE, NIS consistency |
+| `fusion_core/factor_graph.py` | **M6**: `PlanarFactorGraph` — GTSAM/ISAM2 pose graph behind the exact `PlanarPoseEstimator` interface (relative hooks as native `BetweenFactorPose2`, GNSS/heading as partial priors). Needs the `gtsam==4.2.1` PyPI wheel (in the fusion image); import is guarded so the EKF path stays numpy-only. A/B vs the EKF: `scripts/m6_ab_benchmark.py` → `results/m6_ab.md` (accuracy parity, EKF 3.5× cheaper on GNSS-heavy streams). |
+| `test/` | pytest (18): covariance behaviour, Joseph PSD invariance, convergence, *filter-beats-raw-measurements* RMSE, NIS consistency + factor-graph behavioural twins (frame cancellation, keystone drift→reacquire) |
 
 ## Design
 - **One core, two wrappers.** `ego_localizer` (pose+velocity+bias) and
@@ -31,5 +33,6 @@ docker run --rm -v "$PWD/ros2_ws/src/fusion_core":/pkg:ro sensing-node/fusion:lo
 ```
 
 ## Not yet (future milestones)
-UKF + GTSAM factor-graph variants (M6, A/B vs this EKF); IMU-bias state and the
-relative/absolute measurement models live with `ego_localizer` (M3).
+UKF variant; IMU-bias state. The GTSAM factor-graph variant is DONE (M6,
+above); the relative/absolute measurement models live with `ego_localizer`
+(M3/M4 — its `PlanarPoseEstimator` is the EKF twin of `PlanarFactorGraph`).

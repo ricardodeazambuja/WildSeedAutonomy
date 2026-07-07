@@ -1,20 +1,27 @@
 # ego_localizer
 
 The ego-pose EKF node — wraps [`fusion_core`](../fusion_core) to fuse the spine
-IMU + odometry into one `nav_msgs/Odometry`. PLAN §5/§5.1, **milestone 3
-foundation**.
+IMU + odometry + the odometry frontends into one `nav_msgs/Odometry`.
+PLAN §5/§5.1, **milestones 3 + 4**.
 
-Sensor-agnostic by construction: adding a frontend (lidar M4, visual M4, GNSS
-M5) is a new subscription + `*_update` call, **not** new filter code.
+Sensor-agnostic **by demonstration, not just construction**: the M3 visual
+frontend (OpenVINS, `visual_delta_update`) and the M4 lidar frontend
+(KISS-ICP, `lidar_delta_update`) are the SAME body-frame-delta measurement
+model — the second one landed as a new subscription + one delegating method,
+zero filter-code changes ([`docs/m4-lio.md`](../../../docs/m4-lio.md)). GNSS
+(M5) is the droppable absolute fix.
 
 ## Layout
 | File | Purpose |
 |---|---|
-| `ego_localizer/estimator.py` | ROS-free `PlanarPoseEstimator` — state `[px,py,yaw,vx,vy,wz]`, CV predict, IMU + odom updates (yaw innovations wrapped). Deterministic, unit-tested. |
-| `ego_localizer/node.py` | thin ROS plumbing: subscribe IMU + odom, predict-to-now, publish fused odometry (+ optional TF). |
-| `config/ego_localizer.yaml` | Husky-sim topics + tuning (process / measurement noise). |
-| `launch/ego_localizer.launch.py` | launch with that config. |
-| `test/` | offline pytest: heading fusion beats odom heading, fused position beats raw odom + tracks truth, covariance stays sym-PSD. |
+| `ego_localizer/estimator.py` | ROS-free `PlanarPoseEstimator` — state `[px,py,yaw,vx,vy,wz]`, CV predict; IMU, odom, VIO-delta (M3), lidar-delta (M4), GNSS + course updates (yaw innovations wrapped). Deterministic, unit-tested. |
+| `ego_localizer/node.py` | thin ROS plumbing: subscriptions per enabled source, predict-to-now, publish fused odometry (+ optional TF). `lidar_min_dt` gives the lidar deltas a minimum baseline (scan-to-scan ICP deltas have SNR<1 at UGV speeds — see m4-lio.md). |
+| `config/ego_localizer.yaml` | Husky-sim topics + tuning (absolute-odom mode, M3 foundation). |
+| `config/ego_localizer_visual.yaml` | M3 chart config: VIO alone + IMU yaw-rate (no wheel odom, no GNSS). |
+| `config/ego_localizer_lidar.yaml` | M4 chart config: lidar odometry alone + IMU yaw-rate; σ fit from measured residuals — NOT copied from the VIO config. |
+| `config/ego_localizer_gnss.yaml` | M5 keystone config: relative odom + droppable GNSS. |
+| `launch/…launch.py` | one launcher per config. |
+| `test/` | offline pytest (11): heading fusion beats odom heading, fused position beats raw odom + tracks truth, VIO/lidar frame-cancellation + hook equivalence, keystone drift→reacquire, covariance stays sym-PSD. |
 
 ## Run
 ```bash
@@ -49,6 +56,15 @@ from spiralling.
   recovers after. Reproduce: `scripts/gps_denied_demo.py` + `scripts/plot_gps_denied.py`
   (sim up + `ego_localizer_gnss.launch.py`). See PLAN §19.1–§19.2.
 
-## Remaining for full M3
-Visual frontend (OpenVINS) on EuRoC + ATE/RPE vs `robot_localization` and Vicon
-truth — the dataset/eval layer on top of this node. See PLAN M3 / §19.1.
+## Frontends (M3 + M4, both done sim-first)
+- **Visual (M3):** stereo OpenVINS → `/odomimu` → `visual_delta_update`; raw
+  ATE 0.069 m / fused 0.077 m over the 20.5 m chart drive
+  ([`docs/m3-vio.md`](../../../docs/m3-vio.md)).
+- **Lidar (M4):** KISS-ICP → `/kiss/odometry` → `lidar_delta_update`; A/B'd
+  against the VIO in the same drive on four worlds — complementary failure
+  modes measured ([`docs/m4-lio.md`](../../../docs/m4-lio.md),
+  `results/m4_terrain_sweep.png`).
+
+## Remaining (real-data tiers)
+OpenVINS on EuRoC vs Vicon (M3b) and KISS-ICP on NTU VIRAL (M4 real tier) —
+the dataset/eval layers on top of this node. See PLAN §12.

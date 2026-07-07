@@ -15,8 +15,26 @@ in [`docs/PLAN.md`](docs/PLAN.md).
 
 > **Status:** see [`docs/status-and-testing.md`](docs/status-and-testing.md) — the
 > live milestone table, the tiered testing manual, and the per-milestone
-> verification log. (Headline so far: infra, teleop, the EKF core, stereo VIO
-> sim-first, and the GPS-denied drift→reacquire keystone are done, laptop-verified.)
+> verification log. (Headline so far: infra, teleop, the EKF core, **both**
+> odometry frontends sim-first — stereo VIO (M3) and KISS-ICP lidar (M4) through
+> the same fusion spine — the GPS-denied drift→reacquire keystone incl. on
+> procedural terrain, a four-world terrain sweep, and the GTSAM-vs-EKF A/B (M6):
+> all done, laptop-verified.)
+
+<p align="center">
+  <img src="results/m4_terrain_sweep.png" alt="VIO vs LIO vs fused across four terrains — complementary failure modes" width="820">
+</p>
+
+*The thesis, measured: **no single odometry frontend survives all terrains.**
+The same drive + the same fusion spine on four worlds (hand-made `pipeline` +
+three seeded WildSeed bundles): stereo VIO is superb wherever texture exists
+(ATE 0.045–0.097 m) but **diverges on the alpine world** (45 m — verified
+mid-route texture starvation, 57 tracked corners < the 80-corner KLT floor),
+exactly where the lidar frontend keeps working; lidar local consistency is best
+in the forest (RPE 0.100 m) and weakest on ground-plane-dominated flats. Both
+frontends feed the same `fusion_core` EKF through one relative-hook interface —
+swapping sensors touches zero filter code. Full method + war stories:
+[`docs/m4-lio.md`](docs/m4-lio.md).*
 
 <p align="center">
   <img src="results/vio_lio_recipe_vs_bare.png" alt="M3 stereo-VIO ATE on a WildSeed vio_lio recipe world vs a bare world" width="760">
@@ -33,10 +51,10 @@ graph. Full method
 
 | Path | Purpose |
 |---|---|
-| `docker/` | `Dockerfile.sim` (Gazebo+RViz), `Dockerfile.fusion` (perception/ML), `compose.yaml`, `cyclonedds.xml` |
+| `docker/` | `Dockerfile.sim` (Gazebo+RViz), `Dockerfile.fusion` (perception/ML + gtsam), `Dockerfile.openvins` (M3 VIO frontend), `Dockerfile.kissicp` (M4 lidar frontend), `compose.yaml`, `cyclonedds.xml` |
 | `scripts/` | `deploy.sh` (lifecycle, incl. `viz`/`teleop`/`estop`), `remote.sh` (drive the server sim + local RViz from the laptop), `check_host.sh`, `diag_sim.sh`, `demo_n1_teleop.sh` + `n1_drive.py` + `n1_worker.sh` (N1 teleop demo), `plot_trajectory.py`, `expt_gz_ros2_control.sh` |
-| `ros2_ws/src/fusion_core/` | ROS-free EKF library (numpy) + pytest — the shared filter `ego_localizer`/`object_tracker` wrap (PLAN M2) |
-| `ros2_ws/src/ego_localizer/` | ego-pose EKF node wrapping `fusion_core` (fuses IMU + odometry → `/ego_localizer/odom`); verified live on the sim (PLAN M3 foundation) |
+| `ros2_ws/src/fusion_core/` | ROS-free estimation library + pytest — the hand-rolled EKF (numpy, PLAN M2) **and** its GTSAM/ISAM2 factor-graph twin behind the same interface (PLAN M6, A/B: `results/m6_ab.md`) |
+| `ros2_ws/src/ego_localizer/` | ego-pose fusion node wrapping `fusion_core` — IMU + wheel odom + **VIO (M3) / lidar-odometry (M4) relative hooks** + droppable GNSS → `/ego_localizer/odom`; verified live on the sim |
 | `ros2_ws/src/eval_tools/` | ROS-free ATE/RPE metrics + `evaluate` chart CLI — the money-chart backbone for every dataset/sim milestone (PLAN §6) |
 | `ros2_ws/src/sensing_bringup/config/robot.yaml` | Clearpath Husky: Ouster OS1 + OAK-D stereo + Microstrain IMU |
 | `ros2_ws/src/sensing_bringup/launch/husky_sim.launch.py` | robust event-driven headless Husky bringup (gz server-only + condition waits) |
