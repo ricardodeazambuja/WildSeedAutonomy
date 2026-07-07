@@ -1,0 +1,31 @@
+# ego_localizer for the M4 lidar-odometry demo (KISS-ICP, in sim).
+#
+# LIO ALONE: the relative motion comes from KISS-ICP (/kiss/odometry) fused with
+# the IMU yaw-rate — the SAME shape as the M3 visual config, with the frontend
+# swapped (the sensor-agnostic point of the spine). use_odom=false on purpose —
+# the sim's wheel odom is near-perfect, so including it would flatter the chart
+# and hide whether the *lidar* frontend actually works. odom_mode=relative =>
+# the absolute IMU yaw (off-frame, §17.4) is never fused; only its yaw-rate.
+# Seed at the origin (eval_tools ATE aligns away the constant offset). No GPS
+# here — drift vs ground truth is the honest M4 metric.
+/ego_localizer:
+  ros__parameters:
+    use_sim_time: true
+    odom_mode: relative
+    use_odom: false
+    use_lidar: true
+    gps_enabled: false           # M4 = lidar frontend ONLY (GNSS fusion is M5's keystone;
+                                 # the node defaults gps_enabled=True — same trap as M3).
+    seed_at_origin: true
+    imu_topic: /a200_0000/sensors/imu_0/data
+    lidar_topic: /kiss/odometry
+    output_topic: /ego_localizer/odom
+    output_frame: odom
+    child_frame: base_link
+    publish_rate: 30.0
+    publish_tf: false
+    sigma_a: 1.0
+    sigma_alpha: 1.0
+    sigma_imu_wz: 0.02
+    sigma_lidar_v: 0.05          # lidar velocity-increment std (m/s) — trust the frontend
+    sigma_lidar_wz: 0.02

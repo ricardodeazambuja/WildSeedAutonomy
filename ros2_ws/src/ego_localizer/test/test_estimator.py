@@ -241,6 +241,54 @@ def test_visual_delta_update_cancels_vio_frame_and_tracks_truth():
     assert naive > 5 * rmse, (naive, rmse)                   # ...far worse → why we use deltas
 
 
+def test_lidar_delta_update_matches_visual_model_and_cancels_frame():
+    """M4: the lidar relative hook is the SAME measurement model as the visual one
+    (the sensor-agnostic spine contract). Two estimators fed identical body-frame
+    deltas — one through `visual_delta_update`, one through `lidar_delta_update` —
+    must evolve identically; and, as with VIO, KISS-ICP's arbitrary odometry-frame
+    offset cancels because only increments are fused."""
+    rng = np.random.default_rng(13)
+    dt = 0.1                       # ~10 Hz lidar
+    v, wz = 0.8, 0.2
+    theta_off, tx, ty = -1.1, 12.0, 4.0   # lidar-odom frame: rotated + translated
+
+    def lio_of(px, py, yaw, dx, dy, dyaw):
+        X = tx + math.cos(theta_off) * px - math.sin(theta_off) * py + dx
+        Y = ty + math.sin(theta_off) * px + math.cos(theta_off) * py + dy
+        return X, Y, wrap(yaw + theta_off + dyaw)
+
+    est_l = PlanarPoseEstimator(sigma_a=0.5, sigma_alpha=0.5)
+    est_v = PlanarPoseEstimator(sigma_a=0.5, sigma_alpha=0.5)
+    est_l.seed_pose(0.0, 0.0, 0.0)
+    est_v.seed_pose(0.0, 0.0, 0.0)
+    px = py = yaw = 0.0
+    drift = np.zeros(3)
+    Xp, Yp, Yawp = lio_of(0, 0, 0, 0, 0, 0)
+    errs = []
+    for _ in range(400):
+        px += v * math.cos(yaw) * dt
+        py += v * math.sin(yaw) * dt
+        yaw = wrap(yaw + wz * dt)
+        drift += rng.normal(scale=[0.002, 0.002, 0.001])     # slow lidar-odom drift
+        X, Y, Yaw = lio_of(px, py, yaw, *drift)
+        dX, dY = X - Xp, Y - Yp
+        c, s = math.cos(Yawp), math.sin(Yawp)
+        dx_body, dy_body = c * dX + s * dY, -s * dX + c * dY
+        dyaw = wrap(Yaw - Yawp)
+        Xp, Yp, Yawp = X, Y, Yaw
+        est_l.predict(dt)
+        est_l.lidar_delta_update(dx_body, dy_body, dyaw, dt)
+        est_v.predict(dt)
+        est_v.visual_delta_update(dx_body, dy_body, dyaw, dt)
+        errs.append(math.hypot(est_l.state[0] - px, est_l.state[1] - py))
+
+    assert np.allclose(est_l.state, est_v.state)             # identical model
+    assert np.allclose(est_l.covariance, est_v.covariance)
+    rmse = math.sqrt(float(np.mean(np.square(errs))))
+    assert rmse < 0.5, rmse                                  # fused tracks truth
+    assert abs(wrap(est_l.state[2] - yaw)) < 0.2             # heading tracks too
+
+
 def test_covariance_stays_finite_and_symmetric():
     est = PlanarPoseEstimator()
     est.seed_pose(0, 0, 0)

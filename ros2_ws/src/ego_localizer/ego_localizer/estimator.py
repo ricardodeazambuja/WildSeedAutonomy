@@ -142,6 +142,21 @@ class PlanarPoseEstimator:
         z = np.array([vx, vy, dyaw / dt])
         return self.ekf.update(z, H, R)
 
+    def lidar_delta_update(self, dx_body, dy_body, dyaw, dt,
+                           sigma_v=0.05, sigma_wz=0.02):
+        """Fuse a lidar-odometry motion increment (M4) — the second relative frontend.
+
+        KISS-ICP emits an absolute pose in its OWN lidar-odometry frame (arbitrary
+        origin, drifting — odometry only, no loop closure). Exactly as with VIO, we
+        fuse only the body-frame increment between consecutive poses, so the unknown
+        frame offset cancels. The measurement model is IDENTICAL to
+        `visual_delta_update` — that is the sensor-agnostic point of the spine: a
+        second frontend is just another relative hook, no change to `fusion_core`
+        or the state vector.
+        """
+        return self.visual_delta_update(dx_body, dy_body, dyaw, dt,
+                                        sigma_v=sigma_v, sigma_wz=sigma_wz)
+
     def imu_rate_update(self, wz, sigma_wz=0.02):
         """Fuse IMU yaw-RATE only (row 5). Frame-independent — use in relative mode
         where the IMU's absolute yaw is in the gz world frame, not the GPS ENU frame

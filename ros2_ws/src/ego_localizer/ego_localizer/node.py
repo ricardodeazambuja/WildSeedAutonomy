@@ -51,12 +51,15 @@ class EgoLocalizer(Node):
         self.publish_tf = bool(g('publish_tf', False).value)
         self.odom_mode = str(g('odom_mode', 'absolute').value)   # absolute | relative
         self.gps_enabled = bool(g('gps_enabled', True).value)
-        # Frontends (M3): wheel odom and/or a visual-inertial odometry (OpenVINS).
-        # For the M3 chart we run VIO ALONE (use_odom=false) so the result reflects
-        # the visual frontend, not the sim's near-perfect wheel odom propping it up.
+        # Frontends: wheel odom and/or visual-inertial odometry (OpenVINS, M3)
+        # and/or lidar odometry (KISS-ICP, M4). For the M3/M4 charts we run one
+        # frontend ALONE (use_odom=false) so the result reflects that frontend,
+        # not the sim's near-perfect wheel odom propping it up.
         self.use_odom = bool(g('use_odom', True).value)
         self.use_visual = bool(g('use_visual', False).value)
         self.visual_topic = g('visual_topic', '/odomimu').value
+        self.use_lidar = bool(g('use_lidar', False).value)
+        self.lidar_topic = g('lidar_topic', '/kiss/odometry').value
         # Seed the EKF at the origin on the first frontend message (no GPS needed).
         # Fine for evaluation: eval_tools ATE does a Umeyama alignment, which removes
         # any constant origin/heading offset — only trajectory SHAPE is scored.
@@ -73,6 +76,8 @@ class EgoLocalizer(Node):
         self.sigma_gnss = float(g('sigma_gnss', 0.5).value)
         self.sigma_visual_v = float(g('sigma_visual_v', 0.05).value)
         self.sigma_visual_wz = float(g('sigma_visual_wz', 0.02).value)
+        self.sigma_lidar_v = float(g('sigma_lidar_v', 0.05).value)
+        self.sigma_lidar_wz = float(g('sigma_lidar_wz', 0.02).value)
         # GPS course-over-ground anchors heading to ENU (§17.4 fix, relative mode):
         # only trusted when the robot has moved at least this far between fixes.
         self.gnss_course_min_move = float(g('gnss_course_min_move', 0.25).value)
@@ -85,6 +90,8 @@ class EgoLocalizer(Node):
             self.create_subscription(Odometry, self.odom_topic, self.on_odom, 20)
         if self.use_visual:
             self.create_subscription(Odometry, self.visual_topic, self.on_visual, sensor_qos)
+        if self.use_lidar:
+            self.create_subscription(Odometry, self.lidar_topic, self.on_lidar, sensor_qos)
         self.create_subscription(NavSatFix, self.gps_topic, self.on_gps, sensor_qos)
         self.create_subscription(Bool, '~/set_gps_enabled', self.on_gps_toggle, 10)
         self.pub = self.create_publisher(Odometry, self.out_topic, 10)
@@ -98,11 +105,14 @@ class EgoLocalizer(Node):
         self._enu0 = None             # (lat0, lon0) ENU origin
         self._prev_enu = None         # previous ENU fix, for course-over-ground
         self._prev_vio = None         # previous VIO pose (X,Y,yaw) for body-frame deltas
+        self._prev_lio = None         # previous lidar-odom pose, same delta scheme
         srcs = [f"IMU '{self.imu_topic}'"]
         if self.use_odom:
             srcs.append(f"odom '{self.odom_topic}'")
         if self.use_visual:
             srcs.append(f"VIO '{self.visual_topic}'")
+        if self.use_lidar:
+            srcs.append(f"LIO '{self.lidar_topic}'")
         if self.odom_mode == 'relative':
             srcs.append(f"GNSS '{self.gps_topic}'")
         self.get_logger().info(
@@ -189,6 +199,36 @@ class EgoLocalizer(Node):
         self.est.visual_delta_update(dx_body, dy_body, wrap(Yaw - Yawp), dt,
                                      sigma_v=self.sigma_visual_v,
                                      sigma_wz=self.sigma_visual_wz)
+
+    def on_lidar(self, msg: Odometry):
+        """KISS-ICP lidar odometry → relative body-frame motion (M4, loosely coupled).
+
+        Same scheme as `on_visual`: KISS-ICP publishes an absolute pose in its own
+        drifting lidar-odometry frame; we feed only the body-frame increment between
+        consecutive poses (frame offset cancels). The Ouster is mounted rpy 0,0,0
+        (robot.yaml), so the lidar frame is axis-aligned with base_link and the
+        planar delta transfers directly. dt comes from the message stamps.
+        """
+        p = msg.pose.pose
+        X, Y, Yaw = p.position.x, p.position.y, yaw_from_quat(p.orientation)
+        t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        if self._prev_lio is None:
+            self._prev_lio = (X, Y, Yaw, t)
+            return
+        Xp, Yp, Yawp, tp = self._prev_lio
+        self._prev_lio = (X, Y, Yaw, t)
+        if not self.est._initialised:
+            return
+        dt = t - tp
+        if dt <= 0:
+            return
+        dX, dY = X - Xp, Y - Yp                    # delta in the lidar-odom frame
+        c, s = math.cos(Yawp), math.sin(Yawp)      # rotate into the prev body frame
+        dx_body, dy_body = c * dX + s * dY, -s * dX + c * dY
+        self._predict_to_now()
+        self.est.lidar_delta_update(dx_body, dy_body, wrap(Yaw - Yawp), dt,
+                                    sigma_v=self.sigma_lidar_v,
+                                    sigma_wz=self.sigma_lidar_wz)
 
     def on_gps(self, msg: NavSatFix):
         if self._enu0 is None:
