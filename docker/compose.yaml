@@ -147,12 +147,43 @@ services:
       exec ros2 run ov_msckf run_subscribe_msckf
       --ros-args -p config_path:=/config/estimator_config.yaml"
 
+  # ── M4 lidar frontend (profile: lio) — KISS-ICP on the sim Ouster ────────
+  # Pure lidar odometry (no IMU — the spine IMU stays with fusion_core) on the
+  # Ouster OS1's PointCloud2 -> /kiss/odometry, consumed by ego_localizer's
+  # lidar config (lidar_delta_update, the same relative-hook shape as VIO).
+  # deskew is OFF: the gz gpu_lidar cloud has no per-point time (§17.2 wall;
+  # docs/kiss-icp-failure-modes.md #3) — route via gz_lidar_timestamp to turn
+  # it on. base_frame stays empty -> odometry in the lidar frame, which is
+  # axis-aligned with base_link (robot.yaml mounts the Ouster at rpy 0,0,0),
+  # so body-frame deltas transfer directly. publish_odom_tf off so its
+  # odom_lidar frame never fights the sim's TF tree.
+  # Start:  deploy.sh up lio   (with compute up)
+  kissicp:
+    <<: *hardening
+    profiles: [lio]
+    image: sensing-node/kissicp:local
+    build: { context: ., dockerfile: Dockerfile.kissicp }
+    network_mode: host
+    environment:
+      <<: *env
+    volumes:
+      - ./cyclonedds.xml:/etc/cyclonedds.xml:ro
+    command: >
+      bash -lc "source /kiss_ws/install/setup.bash &&
+      exec ros2 run kiss_icp kiss_icp_node --ros-args
+      -r pointcloud_topic:=/a200_0000/sensors/lidar3d_0/points
+      -p use_sim_time:=true
+      -p publish_odom_tf:=false
+      -p publish_debug_clouds:=false
+      -p data.deskew:=false"
+
   # Ground-truth pose bridge: gz model pose -> ROS TF (for ATE/RPE vs truth).
   # SIM_WORLD_NAME (written by `deploy.sh world` alongside SIM_WORLD) keeps the
   # gz topic in step with the loaded world; default is the pipeline world.
+  # Shared by the vio AND lio profiles (both eval against gz truth).
   gtbridge:
     <<: *hardening
-    profiles: [vio]
+    profiles: [vio, lio]
     image: sensing-node/sim:local
     network_mode: host
     environment:

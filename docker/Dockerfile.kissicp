@@ -1,0 +1,47 @@
+# Sensing-node KISS-ICP image — the lidar odometry frontend (M4).
+#
+# KISS-ICP (PRBonn/kiss-icp) is pure lidar odometry: point-to-point ICP with an
+# adaptive threshold and a constant-velocity motion model — no IMU, no loop
+# closure. That is exactly why the PLAN (§3.2) picks it: the spine IMU stays
+# free for `fusion_core` (no double-counting), and the output is clean to fuse
+# (no retroactive jumps). Failure catalogue: docs/kiss-icp-failure-modes.md.
+#
+# NOT in the Jazzy apt distribution — source build of the ros/ wrapper package
+# (verified 2026-06-21). Unlike OpenVINS this one is light: the in-tree cpp core
+# builds via add_subdirectory, and all third-party deps resolve from the system
+# packages below (FetchContent is only the fallback).
+#
+# §17.2 WALL — deskew: the gz `gpu_lidar` cloud has NO per-point time field, so
+# KISS-ICP must run deskew-off (it WARNs and disables itself if the field is
+# missing; we also pin data.deskew:=false in compose). To exercise the deskew
+# path in sim, point it at gz_lidar_timestamp's `points_with_time` topic instead.
+FROM ros:jazzy
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# ros:jazzy (ros-base) already has rclcpp/sensor_msgs/nav_msgs/tf2_ros; the
+# kiss_icp package.xml additionally wants eigen, sophus, tbb, robin-map.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git build-essential cmake \
+        libeigen3-dev libtbb-dev robin-map-dev ros-jazzy-sophus \
+    && rm -rf /var/lib/apt/lists/*
+
+# Pin to a known-good main commit (PLAN §14: pin so it still builds in a year);
+# recorded at /kiss_ws/KISSICP_COMMIT. Clone the WHOLE repo: the ros/ package
+# builds the in-tree cpp/kiss_icp core via add_subdirectory (no network fetch).
+ARG KISSICP_COMMIT=1ffa7d7512f10bfc8b1185095011fa31184019e3
+WORKDIR /kiss_ws/src
+RUN git clone https://github.com/PRBonn/kiss-icp.git \
+    && git -C kiss-icp checkout "$KISSICP_COMMIT" \
+    && git -C kiss-icp rev-parse HEAD | tee /kiss_ws/KISSICP_COMMIT
+
+WORKDIR /kiss_ws
+RUN . /opt/ros/jazzy/setup.sh \
+    && colcon build \
+        --packages-select kiss_icp \
+        --cmake-args -DCMAKE_BUILD_TYPE=Release \
+    && rm -rf build log
+
+RUN echo 'source /opt/ros/jazzy/setup.bash' >> /etc/bash.bashrc \
+    && echo 'source /kiss_ws/install/setup.bash' >> /etc/bash.bashrc
+CMD ["bash"]
