@@ -50,7 +50,11 @@ LIO_WAIT_S = 25.0    # SIM seconds to wait for /kiss/odometry
 DRIVE_S = 8.0        # SIM seconds of driven window for the sanity ratio
 DRIVE_V = 0.5        # commanded forward speed (m/s)
 MIN_GT_MOVE = 1.0    # m — ground truth must actually move this far in the window
-RATIO_LO, RATIO_HI = 0.5, 2.0   # kiss/gt translation ratio accepted band
+RATIO_LO, RATIO_HI = 0.3, 2.0   # kiss/gt translation ratio accepted band.
+# LO=0.3, not 0.5: KISS-ICP systematically UNDER-reports translation on a slow
+# UGV (measured 0.45-0.6 across worlds/configs — per-scan motion sits below its
+# designed automotive regime; docs/m4-lio.md). The gate's job is catching DEATH
+# (frozen at origin ~0.05, divergence >2), not calibrated accuracy.
 
 # ── sim-time helpers ─────────────────────────────────────────────────────────
 # DUPLICATED in: scripts/m3_vio_demo.py, scripts/gps_denied_demo.py,

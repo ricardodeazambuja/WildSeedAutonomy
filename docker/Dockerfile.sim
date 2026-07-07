@@ -108,6 +108,19 @@ RUN grep -q 'samples_h:=1024' /opt/ros/jazzy/share/clearpath_sensors_description
     && grep -q 'samples_h:=512' /opt/ros/jazzy/share/clearpath_sensors_description/urdf/ouster_os1.urdf.xacro \
     && grep -q 'samples_v:=32' /opt/ros/jazzy/share/clearpath_sensors_description/urdf/ouster_os1.urdf.xacro
 
+# ⚠️ The xacro sed above alone was a SILENT NO-OP (found during M4): the Clearpath
+# description GENERATOR writes explicit samples_h="1024" samples_v="64" into the
+# generated robot.urdf.xacro (clearpath_generator_common OusterOS1Description
+# hard-codes them — "TODO: link to clearpath_config property" upstream), so the
+# xacro *defaults* never bind and the live cloud stayed 1024x64 (65,536 pts).
+# Patch the generator too, same guarded fail-the-build style. (update_rate stays
+# at the generator's 20 Hz — a real OS1 mode; 512x32@20 Hz is the same 4x ray cut.)
+RUN f=/opt/ros/jazzy/lib/python3.12/site-packages/clearpath_generator_common/description/sensors.py \
+    && grep -q 'self.SAMPLES_HORIZONTAL: 1024' "$f" \
+    && sed -i 's|self.SAMPLES_HORIZONTAL: 1024|self.SAMPLES_HORIZONTAL: 512|; s|self.SAMPLES_VERTICAL: 64|self.SAMPLES_VERTICAL: 32|' "$f" \
+    && grep -q 'self.SAMPLES_HORIZONTAL: 512' "$f" \
+    && grep -q 'self.SAMPLES_VERTICAL: 32' "$f"
+
 ENV GZ_VERSION=harmonic
 RUN echo 'source /opt/ros/jazzy/setup.bash' >> /etc/bash.bashrc
 

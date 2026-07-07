@@ -60,6 +60,13 @@ class EgoLocalizer(Node):
         self.visual_topic = g('visual_topic', '/odomimu').value
         self.use_lidar = bool(g('use_lidar', False).value)
         self.lidar_topic = g('lidar_topic', '/kiss/odometry').value
+        # Minimum sim-time baseline between consumed lidar poses. Scan-to-scan
+        # ICP poses carry cm-level registration noise; at a slow UGV's 2-5 cm
+        # per-scan motion the per-delta SNR is < 1, so differentiating every
+        # scan feeds the EKF noise (measured: 15 Hz deltas read 1.9 m/s mean on
+        # a 0.5 m/s drive). Spanning >= this baseline restores SNR without
+        # touching the frontend. 0 = consume every pose (the M3 VIO behaviour).
+        self.lidar_min_dt = float(g('lidar_min_dt', 0.0).value)
         # Seed the EKF at the origin on the first frontend message (no GPS needed).
         # Fine for evaluation: eval_tools ATE does a Umeyama alignment, which removes
         # any constant origin/heading offset — only trajectory SHAPE is scored.
@@ -216,10 +223,12 @@ class EgoLocalizer(Node):
             self._prev_lio = (X, Y, Yaw, t)
             return
         Xp, Yp, Yawp, tp = self._prev_lio
+        dt = t - tp
+        if 0 <= dt < self.lidar_min_dt:
+            return                      # keep the anchor; wait for a longer baseline
         self._prev_lio = (X, Y, Yaw, t)
         if not self.est._initialised:
             return
-        dt = t - tp
         if dt <= 0:
             return
         dX, dY = X - Xp, Y - Yp                    # delta in the lidar-odom frame

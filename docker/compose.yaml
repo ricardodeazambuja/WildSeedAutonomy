@@ -158,6 +158,25 @@ services:
   # so body-frame deltas transfer directly. publish_odom_tf off so its
   # odom_lidar frame never fights the sim's TF tree.
   # Start:  deploy.sh up lio   (with compute up)
+  # Scan decimator: 20 Hz Ouster -> 5 Hz into KISS-ICP. At the Husky's 0.5 m/s
+  # the raw 20 Hz stream gives 2.5 cm/scan — below KISS-ICP's designed motion
+  # regime (min_motion_th 0.1 m) — and the pose systematically under-reports
+  # translation. 5 Hz restores ~10 cm per registration. Count-based (RTF-proof),
+  # same relay pattern as camera_guard. (fusion image = rclpy only.)
+  cloud_decimator:
+    <<: *hardening
+    profiles: [lio]
+    image: sensing-node/fusion:local
+    network_mode: host
+    environment:
+      <<: *env
+    volumes:
+      - ../ros2_ws:/ros2_ws:ro
+      - ./cyclonedds.xml:/etc/cyclonedds.xml:ro
+    command: >
+      bash -lc "source /opt/ros/jazzy/setup.bash &&
+      exec python3 /ros2_ws/src/sensing_bringup/scripts/cloud_decimator.py"
+
   kissicp:
     <<: *hardening
     profiles: [lio]
@@ -168,14 +187,28 @@ services:
       <<: *env
     volumes:
       - ./cyclonedds.xml:/etc/cyclonedds.xml:ro
+    # MEASURED (M4 bring-up, three instrumented runs):
+    #  - throughput lever = CLOUD SIZE, not kiss knobs: at 1024x64 (65k pts)
+    #    registration fell behind the 20 Hz scans under motion (6.6 Hz
+    #    effective); shrinking the voxel to 0.4 made it WORSE (1.8 Hz, 1.6 s
+    #    gaps). Fix = the 512x32 sensor cut in Dockerfile.sim (generator patch).
+    #  - adaptive_threshold stays at DEFAULTS. Lowering min_motion_th to 0.01
+    #    (to "match the slow UGV") froze KISS-ICP at the origin: while the
+    #    robot sat still, sub-cm noise adapted the correspondence threshold
+    #    toward zero, and once real (2.5 cm/scan) motion started every true
+    #    correspondence fell outside the search radius -> ICP returned
+    #    identity forever. min_motion_th=0.1 exists to prevent exactly that.
+    #  - voxel 0.5 (vs default max_range/100=1.0) tightens correspondences and
+    #    is affordable on the 9.5k-pt clouds.
     command: >
       bash -lc "source /kiss_ws/install/setup.bash &&
       exec ros2 run kiss_icp kiss_icp_node --ros-args
-      -r pointcloud_topic:=/a200_0000/sensors/lidar3d_0/points
+      -r pointcloud_topic:=/a200_0000/sensors/lidar3d_0/points_decimated
       -p use_sim_time:=true
       -p publish_odom_tf:=false
       -p publish_debug_clouds:=false
-      -p data.deskew:=false"
+      -p data.deskew:=false
+      -p mapping.voxel_size:=0.5"
 
   # Ground-truth pose bridge: gz model pose -> ROS TF (for ATE/RPE vs truth).
   # SIM_WORLD_NAME (written by `deploy.sh world` alongside SIM_WORLD) keeps the

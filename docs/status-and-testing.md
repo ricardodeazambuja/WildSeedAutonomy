@@ -21,7 +21,8 @@ roadmap (PLAN §12) and the navigation milestones (PLAN §18):
 | **eval_tools** — ATE/RPE metrics + chart CLI | ✅ done (the "money-chart" backbone) |
 | **GPS-denied keystone (in sim)** | ✅ **demonstrated end-to-end** — `results/gps_denied_keystone.png`: mean \|ego − GPS\| **on = 0.12 m → denied = 0.20 m → reacquire = 0.14 m** |
 | **WildSeed procedural worlds** | ✅ integrated + verified (m3-smoke PASS on `scenario --seed 42`) — [`wildseed-worlds.md`](wildseed-worlds.md) |
-| M4–M12 | not started; **priority next = M4 sim-first** (KISS-ICP on the sim Ouster, laptop-closable) — §5 |
+| **M4** — lidar frontend: KISS-ICP → `ego_localizer` lidar hook | ✅ **done sim-first** (raw LIO ATE 0.99 m/RPE 0.26 m pipeline · RPE 0.10 m WildSeed forest; fused tracks raw; VIO A/B same-run) — [`m4-lio.md`](m4-lio.md); **M4 real-lidar tier** (NTU VIRAL) deferred, needs download |
+| M5–M12 | not started; **priority next = M5-keystone-on-WildSeed + terrain sweep + M6 GTSAM** (all laptop-closable) — §5 |
 
 Evidence for every ✅ is in the verification log (§4). The big PLAN §17.4 wall
 (6-axis IMU heading not anchored to the GPS ENU frame, causing the estimate to
@@ -139,18 +140,23 @@ off GPS during the outage and re-locks.
 - Render charts **inside the fusion image**, not host conda (host has a numpy
   2.x/matplotlib mismatch).
 
-### Tier 4 — VIO smoke + procedural worlds
+### Tier 4 — VIO/LIO smoke + procedural worlds
 
 ```bash
 ./scripts/deploy.sh m3-smoke                 # stereo OpenVINS live-VIO gate
-./scripts/deploy.sh world <bundle>           # swap in a WildSeed world, then re-run m3-smoke
+./scripts/deploy.sh m4-smoke                 # KISS-ICP lidar-LIO gate (clouds rich, LIO live+sane)
+./scripts/m4_lio_eval.sh [/results/prefix]   # one-shot M4 eval: RTF gate -> fresh kissicp -> drive -> chart
+./scripts/deploy.sh world <bundle>           # swap in a WildSeed world, then re-run the smokes
 ./scripts/deploy.sh rtf                      # measured sim speed + tier hint
 ./scripts/bench_rtf.sh [--world-only] [bundle]   # where does the RTF go? (4 variants)
 ```
 
 **Expect:** `m3-smoke` reports stereo feature corners, 0 ms stereo sync, and a
-live OpenVINS `/odomimu`. Full VIO pipeline + how-to-run: [`m3-vio.md`](m3-vio.md);
-world bundling workflow + the RTF wall (with the measured variant table):
+live OpenVINS `/odomimu`; `m4-smoke` reports a rich Ouster cloud, live
+`/kiss/odometry`, and a translation-vs-truth ratio around 0.4–0.6 (KISS-ICP
+under-reports at UGV speeds — measured finding, see [`m4-lio.md`](m4-lio.md)).
+Full VIO pipeline: [`m3-vio.md`](m3-vio.md); lidar pipeline + the M4 war
+stories: [`m4-lio.md`](m4-lio.md); world bundling workflow + the RTF wall:
 [`wildseed-worlds.md`](wildseed-worlds.md).
 
 ## 3. Laptop-only verification (environment)
@@ -446,28 +452,49 @@ the Gazebo GUI needed the bundle models mounted + on its resource path
 (client-side mesh resolution — commit `30b4bc5`), or a bundle world shows as
 empty sky/grid while the sensor topics are fine.
 
+**M4 — lidar frontend live on the sim: KISS-ICP → `ego_localizer` lidar hook →
+ATE/RPE vs gz truth, A/B'd against the M3 stereo VIO in the same drive
+(`results/m4_lio.png` pipeline · `results/m4_recipe_lio.png` WildSeed forest,
+2026-07-06).** The architectural point landed exactly as designed: the second
+frontend is `estimator.lidar_delta_update` — the *identical* body-frame-delta
+measurement model as the visual hook — plus a subscription; **zero
+`fusion_core` changes** (its 14 tests untouched-green; `ego_localizer` 11
+green incl. a hook-equivalence test). New: `Dockerfile.kissicp` (source build,
+pinned `1ffa7d7`, `lio` compose profile), `cloud_decimator.py` (20→5 Hz,
+count-based/RTF-proof), `config/ego_localizer_lidar.yaml` (σ **fit from
+measured residuals**, not copied from VIO), `deploy.sh m4-smoke` gate (PASS:
+9.5k-pt clouds, LIO live, ratio 0.42 in the recalibrated 0.3–2.0 band),
+`m4_lio_eval.sh` (steady-RTF gate + **fresh kissicp restart** — its local map
+never resets, so load-transient scans poison whole runs; 12.8 m spurious pose
+measured). **Numbers (same 23 m drive as M3, all streams same-run):** pipeline
+— raw LIO ATE 0.985 m/RPE 0.263 m, fused 1.029/0.269, raw VIO 0.045/0.006;
+forest — raw LIO ATE 4.008/RPE **0.100**, fused 3.856/0.101, VIO 0.046/0.006.
+**Findings (full war stories: [`m4-lio.md`](m4-lio.md)):** (1) the *"OS1
+512×32 in `Dockerfile.sim`"* logged above was a **silent no-op** — the
+Clearpath *generator* hard-codes 1024×64 into the generated URDF over the
+xacro defaults; now patched at the generator (guarded), so the cut is real
+from this entry on (the RTF gains previously credited to it came from
+step-size/labels); (2) cloud size is the registration-throughput lever
+(65k-pt clouds → 6.6 Hz effective under motion; smaller voxel made it worse);
+(3) KISS-ICP systematically **under-reports translation ~40–60 % at UGV
+speeds** across every rate/voxel/threshold/world tried — per-scan motion sits
+below its automotive design regime (its own `min_motion_th` guard implies
+≥10 cm/scan); forest geometry fixes *local* consistency (RPE 2.6× better),
+not the bias; ruled out: self-hits, deskew, QoS drops. This is the
+failure-catalogue #1/#2 story measured on our robot — the M4 degeneracy
+evidence, and the concrete case for absolute anchoring (M5). *Honest
+caveats:* fused-LIO tracks its raw input (a relative-only filter cannot
+correct a biased frontend); recipe-world ATE varies 2.3–4.0 m run-to-run as
+the bias integrates path-dependently (RPE stable 0.06–0.10) — cross-world
+comparisons should read RPE.
+
 ## 5. Next steps — where the loop stops being laptop-closable
 
-The **priority next step is M4 sim-first** — the lidar frontend on the Husky's own
-Ouster, the one *remaining* frontend milestone that is laptop-closable (no
-download), and the architectural payoff (a second frontend through the **same**
-`fusion_core`/`ego_localizer`, proving the sensor-agnostic spine — PLAN §15). The
-steps after it are gated by **external data / source builds**, which are slow,
-failure-prone, and hard to "close the loop" on in one sitting — each wants a
-focused session:
-
-- **M4 sim-first — KISS-ICP on the Husky's Ouster (PRIORITY, laptop-closable).**
-  Mirrors the M3 sim-first pattern: the sim already carries an `ouster_os1`
-  (`robot.yaml`), so run KISS-ICP (source build, lighter than OpenVINS) on its
-  `PointCloud2` → feed the lidar odometry into `ego_localizer` via a **new
-  relative hook** (same shape as `visual_delta_update` — *no core change*, that's
-  the whole point) → `eval_tools` ATE/RPE vs the gz ground-truth pose, **A/B
-  against the M3 stereo VIO in the same world**. **No download.** Groundwork
-  already in place: `ros2_ws/src/gz_lidar_timestamp/` injects the per-point time
-  the gz `gpu_lidar` lacks (the PLAN §17.2 deskew wall). **⚠️ Gate:** run
-  KISS-ICP **deskew-off** (or via `gz_lidar_timestamp`) since gz has no native
-  per-point time; watch for geometric degeneracy (the PLAN §14 / M4 degeneracy
-  chart — failure catalogue: [`kiss-icp-failure-modes.md`](kiss-icp-failure-modes.md)).
+**M4 sim-first is done (§4).** The remaining laptop-closable arc is: **M5
+keystone re-run on a WildSeed bundle → terrain-complexity sweep (VIO vs LIO vs
+fused across seeds/biomes) → M6 GTSAM A/B** — then the steps below, gated by
+**external data / source builds**, which are slow, failure-prone, and hard to
+"close the loop" on in one sitting — each wants a focused session:
 - **M3b — OpenVINS on EuRoC (deferred dataset comparison).** EuRoC ships as
   rosbag2 with OpenVINS: bag → OpenVINS → `ego_localizer` → `eval_tools` ATE/RPE
   vs **Vicon** truth and vs the `robot_localization` baseline — the recognizable
