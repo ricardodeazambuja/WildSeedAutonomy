@@ -11,6 +11,7 @@
 #   ./deploy.sh down                 stop everything
 #   ./deploy.sh smoke                run the DDS talker/listener smoke test
 #   ./deploy.sh m3-smoke             M3 stereo-VIO gate: cameras render+track, OpenVINS live
+#   ./deploy.sh m4-smoke             M4 lidar-LIO gate: clouds rich, KISS-ICP live + sane
 #   ./deploy.sh render               minimal headless EGL render check (smoke world)
 #   ./deploy.sh teleop               interactive keyboard teleop (SSH: ssh -t; or laptop)
 #   ./deploy.sh estop on|off         engage/release the twist_mux e-stop (latches!)
@@ -51,7 +52,8 @@ role_to_profiles() {
     gui)     echo "--profile gui" ;;
     smoke)   echo "--profile smoke" ;;
     vio)     echo "--profile vio" ;;     # M3: OpenVINS + ground-truth bridge (add on top of compute)
-    *) echo "unknown ROLE '$1' (use all|compute|gui|vio)" >&2; exit 2 ;;
+    lio)     echo "--profile lio" ;;     # M4: KISS-ICP + ground-truth bridge (add on top of compute)
+    *) echo "unknown ROLE '$1' (use all|compute|gui|vio|lio)" >&2; exit 2 ;;
   esac
 }
 
@@ -77,7 +79,7 @@ cmd_init() {
 
 cmd_check() { ROLE="$([ -f "$ENV_FILE" ] && getenv ROLE all || echo all)" bash "$ROOT/scripts/check_host.sh" "${1:-}"; }
 
-cmd_build() { need_env; dc --profile compute --profile gui --profile smoke --profile render --profile vio build "$@"; }
+cmd_build() { need_env; dc --profile compute --profile gui --profile smoke --profile render --profile vio --profile lio build "$@"; }
 
 cmd_up() {
   need_env
@@ -95,7 +97,7 @@ cmd_up() {
   esac
 }
 
-cmd_down() { need_env; dc --profile compute --profile gui --profile smoke --profile render --profile teleop --profile vio down ; }
+cmd_down() { need_env; dc --profile compute --profile gui --profile smoke --profile render --profile teleop --profile vio --profile lio down ; }
 
 cmd_teleop() { # interactive keyboard teleop (SSH: use ssh -t; or run on the laptop)
   need_env
@@ -234,6 +236,24 @@ cmd_m3smoke() {
   return $rc
 }
 
+cmd_m4smoke() {
+  need_env
+  echo "── M4 lidar-LIO smoke gate (clouds rich, KISS-ICP live, translation sane) ──"
+  dc --profile compute --profile lio up -d              # idempotent
+  echo "waiting for the Ouster cloud topic..."
+  local i n
+  for i in $(seq 1 80); do
+    n=$(dc exec -T fusion bash -lc 'source /opt/ros/jazzy/setup.bash; ros2 topic list 2>/dev/null | grep -c "lidar3d_0/points$"' 2>/dev/null | tr -d "[:space:]")
+    [ "${n:-0}" -ge 1 ] && break
+    sleep 3
+  done
+  dc exec -T fusion bash -lc \
+    'source /opt/ros/jazzy/setup.bash && python3 /ros2_ws/src/sensing_bringup/scripts/m4_smoke.py'
+  local rc=$?
+  echo "(stack left up — 'deploy.sh down' to stop)"
+  return $rc
+}
+
 case "${1:-}" in
   init)    shift; cmd_init "$@" ;;
   check)   shift; cmd_check "$@" ;;
@@ -242,6 +262,7 @@ case "${1:-}" in
   down)    shift; cmd_down "$@" ;;
   smoke)   shift; cmd_smoke "$@" ;;
   m3-smoke) shift; cmd_m3smoke "$@" ;;
+  m4-smoke) shift; cmd_m4smoke "$@" ;;
   render)  shift; cmd_render "$@" ;;
   teleop)  shift; cmd_teleop "$@" ;;
   estop)   shift; cmd_estop "$@" ;;
