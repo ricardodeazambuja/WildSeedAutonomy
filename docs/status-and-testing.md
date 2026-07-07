@@ -22,7 +22,8 @@ roadmap (PLAN §12) and the navigation milestones (PLAN §18):
 | **GPS-denied keystone (in sim)** | ✅ **demonstrated end-to-end** — `results/gps_denied_keystone.png`: mean \|ego − GPS\| **on = 0.12 m → denied = 0.20 m → reacquire = 0.14 m**; ✅ **re-verified on WildSeed procedural terrain** — `results/gps_denied_wildseed.png` (wildseed_42, RTF 0.6): err **0.07 → 0.61 m over a 16 m denied stretch → snaps back to 0.07 m** |
 | **WildSeed procedural worlds** | ✅ integrated + verified (m3-smoke PASS on `scenario --seed 42`) — [`wildseed-worlds.md`](wildseed-worlds.md) |
 | **M4** — lidar frontend: KISS-ICP → `ego_localizer` lidar hook | ✅ **done sim-first** (raw LIO ATE 0.99 m/RPE 0.26 m pipeline · RPE 0.10 m WildSeed forest; fused tracks raw; VIO A/B same-run) — [`m4-lio.md`](m4-lio.md); **M4 real-lidar tier** (NTU VIRAL) deferred, needs download |
-| M5–M12 | not started; **priority next = M5-keystone-on-WildSeed + terrain sweep + M6 GTSAM** (all laptop-closable) — §5 |
+| **M6** — GTSAM factor-graph variant of the fusion core + A/B vs EKF | ✅ done (`fusion_core.factor_graph.PlanarFactorGraph`, same estimator interface; accuracy parity, EKF 3.5× cheaper on the GNSS-heavy scenario — `results/m6_ab.md`) |
+| M5 (real) / M7–M12 | not started — gated on external data / hardware — §5 |
 
 Evidence for every ✅ is in the verification log (§4). The big PLAN §17.4 wall
 (6-axis IMU heading not anchored to the GPS ENU frame, causing the estimate to
@@ -519,13 +520,35 @@ slopes (0.464). No single frontend survives all terrains — the
 multi-frontend-spine + absolute-anchoring thesis with numbers. Sweep details
 + reading guidance (RPE vs ATE): [`m4-lio.md`](m4-lio.md).
 
+**M6 — GTSAM factor-graph variant of the fusion core, A/B vs the hand-rolled
+EKF (2026-07-07, `results/m6_ab.md` / `.csv`).** New
+`fusion_core/factor_graph.py`: `PlanarFactorGraph`, an **ISAM2 pose graph
+behind the exact `PlanarPoseEstimator` interface** (seed/predict/imu_rate/
+odom_twist/visual_delta/lidar_delta/gnss/heading/state/covariance), so both
+backends run on identical measurement streams. The relative hooks land in
+their *native* factor form — every body-frame increment is a
+`BetweenFactorPose2`, GNSS/heading are partial unary priors, the integrated
+gyro a yaw-only between per interval. gtsam via the PyPI cp312 wheel 4.2.1 in
+`Dockerfile.fusion` (apt `ros-jazzy-gtsam` ships no python bindings). Tests:
+**fusion_core 18 passed** (14 EKF/models + 4 factor-graph behavioural twins:
+frame cancellation, keystone drift→reacquire, covariance response).
+**A/B (`scripts/m6_ab_benchmark.py`, same seeds through both):** accuracy
+parity — keystone pos RMSE 0.925 m (EKF) vs 0.910 m (GTSAM), frontend-deltas
+0.194 vs 0.184 — while the EKF is **3.5× cheaper on the GNSS-heavy scenario**
+(update mean 188 µs / p95 279 vs 662 / 1383; near-parity 210 vs 221 µs on
+delta-only streams, where the graph stays small). Supports the PLAN §3.2
+choice: hand-rolled EKF as the live spine, GTSAM as the comparison branch.
+*Modeling lesson (in the tests):* a smoother has no process noise to absorb
+an overconfident measurement sigma — feed a biased odometry at an honest σ or
+you measure your modeling error, not the backend.
+
 ## 5. Next steps — where the loop stops being laptop-closable
 
-**M4 sim-first is done (§4).** The remaining laptop-closable arc is: **M5
-keystone re-run on a WildSeed bundle → terrain-complexity sweep (VIO vs LIO vs
-fused across seeds/biomes) → M6 GTSAM A/B** — then the steps below, gated by
-**external data / source builds**, which are slow, failure-prone, and hard to
-"close the loop" on in one sitting — each wants a focused session:
+**The laptop-closable arc is closed (§4): M4 sim-first, the keystone on
+WildSeed terrain, the terrain-complexity sweep, and the M6 GTSAM A/B are all
+done.** What remains is gated by **external data / source builds**, which are
+slow, failure-prone, and hard to "close the loop" on in one sitting — each
+wants a focused session:
 - **M3b — OpenVINS on EuRoC (deferred dataset comparison).** EuRoC ships as
   rosbag2 with OpenVINS: bag → OpenVINS → `ego_localizer` → `eval_tools` ATE/RPE
   vs **Vicon** truth and vs the `robot_localization` baseline — the recognizable

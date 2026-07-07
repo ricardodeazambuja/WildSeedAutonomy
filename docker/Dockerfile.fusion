@@ -22,8 +22,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # against apt numpy 1.26 + OpenCV 4.6. Keep numpy < 2 and DO NOT pip-install
 # opencv-python, or they break. PEP 668 on Ubuntu 24.04 refuses system pip
 # installs → --break-system-packages, with deps pinned.
+# gtsam: M6's factor-graph variant of fusion_core. PyPI wheel (cp312) — the
+# apt ros-jazzy-gtsam ships the C++ library only, no python bindings.
 RUN pip install --break-system-packages --no-cache-dir \
-        "numpy<2" scipy matplotlib evo rosbags
+        "numpy<2" scipy matplotlib evo rosbags "gtsam==4.2.1"
 
 # Optional GPU ML stack (Milestone 7). Isolated in a venv with
 # --system-site-packages so it can see apt rclpy/cv2, while its own
