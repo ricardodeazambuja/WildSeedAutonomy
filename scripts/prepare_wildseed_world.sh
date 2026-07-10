@@ -137,5 +137,38 @@ print(f"   spawn.json: ({spawn['x']:g}, {spawn['y']:g}) ground z={h['z']:g} "
       f"-> spawn z={spawn['z']:g}, world '{name}'")
 PY
 
+# 4. provenance — tie the bundle to the exact WildSeed tree + spec that made
+#    it (sweep rows must be traceable to (WildSeed commit, spec, seed)).
+#    `wildseed scenario/experiment` write a resolved-spec sidecar
+#    <world-stem>.yaml (scenario_format, seed, dial values) — embed it if
+#    it's still next to the world file.
+WS_HASH="$(git -C "$WILDSEED" rev-parse HEAD 2>/dev/null || echo unknown)"
+WS_DIRTY=false
+git -C "$WILDSEED" diff --quiet HEAD 2>/dev/null || WS_DIRTY=true
+python3 - "$BDIR" "$WORLD_FILE" "$WS_HASH" "$WS_DIRTY" <<'PY'
+import datetime, json, os, sys
+bdir, world_file, ws_hash, ws_dirty = sys.argv[1:5]
+prov = {"wildseed_commit": ws_hash, "wildseed_dirty": ws_dirty == "true",
+        "world_file": os.path.basename(world_file),
+        "bundled_at": datetime.datetime.now(datetime.timezone.utc)
+                      .isoformat(timespec="seconds")}
+manifest = os.path.splitext(world_file)[0] + ".yaml"
+if os.path.exists(manifest):
+    try:
+        import yaml
+        spec = yaml.safe_load(open(manifest, encoding="utf-8"))
+        prov["spec"] = spec
+        prov["scenario_format"] = spec.get("scenario_format")
+        prov["seed"] = spec.get("seed")
+    except Exception as e:   # no pyyaml / malformed — keep the pointer
+        prov["spec_file"] = os.path.basename(manifest)
+        prov["spec_error"] = str(e)
+json.dump(prov, open(f"{bdir}/provenance.json", "w"), indent=2)
+extra = " (dirty)" if ws_dirty == "true" else ""
+fmt = prov.get("scenario_format")
+print(f"   provenance.json: wildseed {ws_hash[:12]}{extra}"
+      + (f", format {fmt}, seed {prov.get('seed')}" if fmt else ", no spec sidecar"))
+PY
+
 echo "── done. activate with:"
 echo "   ./scripts/deploy.sh world $BUNDLE   &&   ./scripts/deploy.sh restart compute"

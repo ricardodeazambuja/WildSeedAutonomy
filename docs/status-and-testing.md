@@ -549,6 +549,13 @@ WildSeed terrain, the terrain-complexity sweep, and the M6 GTSAM A/B are all
 done.** What remains is gated by **external data / source builds**, which are
 slow, failure-prone, and hard to "close the loop" on in one sitting — each
 wants a focused session:
+- **S-series (S1–S5) — WildSeed stressor axes (PLAN §12): the exception, still
+  laptop-closable.** WildSeed ≥ `c472085` (scenario format 4; old seeds
+  reproduce byte-identically with the dials unset) adds seeded
+  `--texture`/`--photometric`/`--weather`/calibration dials — one variable at
+  fixed geometry, reusing the M4 eval harness end-to-end. Bundles now carry
+  `provenance.json` (WildSeed hash + resolved spec + seed). Next session: S1
+  texture A/B ([`wildseed-worlds.md`](wildseed-worlds.md)).
 - **M3b — OpenVINS on EuRoC (deferred dataset comparison).** EuRoC ships as
   rosbag2 with OpenVINS: bag → OpenVINS → `ego_localizer` → `eval_tools` ATE/RPE
   vs **Vicon** truth and vs the `robot_localization` baseline — the recognizable

@@ -36,6 +36,38 @@ cd ~/GitStuff/WildSeedAutonomy
 ./scripts/deploy.sh world default
 ```
 
+## Stressor dials (WildSeed ≥ `c472085`, scenario format 4)
+
+WildSeed's session-2 work bumped `SCENARIO_FORMAT` 3→4 by **appending** a
+sun/weather `SeedSequence` child to the seed stream: with the dials below
+unset, the same seed still reproduces the old format-3 world
+**byte-identically** (pinned by WildSeed's determinism gates + a format-3
+golden fixture), so existing bundles (`wildseed_42`, the `vio_lio_recipe`
+sweep set) are unaffected. The dials feed the S-series milestones
+(PLAN §12) — each isolates one stressor at fixed geometry:
+
+- `--texture 0..1` — ground compositor at fixed seed/layout/route. **Binary
+  in effect**: < 0.5 composites the uniform aliasing-worst-case ground,
+  ≥ 0.5 the patchy de-aliased one. Isolates the variable the M4 sweep could
+  only proxy through biome.
+- `--photometric 0..1` — sun stress: elevation 55°→5°, intensity 1→5×, plus
+  an emissive glare disk at ≥ 0.75. Camera-only stress; lidar invariant.
+- `--weather <preset>` — clear/overcast/fog/rain/snow/sunglare. **Render
+  risk:** WildSeed's own offscreen renderer crashed on these
+  pre-`7708155`, and our ogre2/EGL container path has never rendered
+  particle emitters — a weather bundle must pass the render gate
+  (`GL_RENDERER` check + a camera-frame sanity peek + `m3-smoke`) before
+  any metric from it is trusted. Honesty note: gz fog attenuates cameras
+  but **not** `gpu_lidar`, so "lidar survives fog" is true in sim *by
+  construction* — frame it as sensor-stress asymmetry.
+- `--biome-file <yaml>` — custom biome YAML; explicit-select only, it never
+  joins the seed-random pool.
+
+Not relevant to bundles: dynamics distractors are record-path only
+(`wildseed record --distractors`) and never appear in scenario worlds; the
+new `rig --calib/--calib-seed` flags only affect the model-writing path the
+bundler doesn't use (`--inject --shell-only` is untouched).
+
 ## What a bundle is
 
 `prepare_wildseed_world.sh` writes `worlds_external/<name>/` (gitignored):
@@ -45,6 +77,7 @@ cd ~/GitStuff/WildSeedAutonomy
 | `world.sdf` | the world, **shell-injected** (`wildseed rig --inject --shell-only --no-labels`): Sensors(ogre2)/Imu/NavSat/AirPressure/Magnetometer systems + `<spherical_coordinates>`; any WildSeed `sensor_rig` include is stripped (the Husky is the robot); then **RTF-tuned** (`tune_world_bundle.sh`: leftover Label plugins stripped, physics step → 0.002 — see the RTF wall below) |
 | `models/` | only the model categories the world references, hardlinked from the WildSeed checkout when same-filesystem (≈0 extra disk) |
 | `spawn.json` | `{x, y, z, yaw, world_name}` — `z` sampled from the terrain mesh (`wildseed height`) + 0.3 m clearance, because WildSeed terrain is NOT flat and Clearpath's default `z=0.15` would bury or drop the robot |
+| `provenance.json` | WildSeed git hash + dirty flag, the source world filename, bundling timestamp, and — when the resolved spec sidecar (`<world-stem>.yaml`, written by `wildseed scenario/experiment`) sits next to the world file — the full spec (scenario format, seed, dial values). Ties every sweep row back to (WildSeed commit, spec, seed) |
 
 Bundles prepared **before** the RTF tuning existed migrate in place:
 `./scripts/tune_world_bundle.sh <bundle> --step 0.002` (idempotent), or just
