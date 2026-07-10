@@ -49,7 +49,11 @@ sweep set) are unaffected. The dials feed the S-series milestones
 - `--texture 0..1` — ground compositor at fixed seed/layout/route. **Binary
   in effect**: < 0.5 composites the uniform aliasing-worst-case ground,
   ≥ 0.5 the patchy de-aliased one. Isolates the variable the M4 sweep could
-  only proxy through biome.
+  only proxy through biome. **Measured (S1, 2026-07-09): a controlled
+  negative** — with corridor scatter in the forward view the dial alone does
+  not degrade stereo VIO (ATE/RPE and KLT survival flat across variants,
+  `results/s1_texture_ab.png`); route-wide landmark starvation, not ground
+  texture, is what killed VIO on the M4 alpine world.
 - `--photometric 0..1` — sun stress: elevation 55°→5°, intensity 1→5×, plus
   an emissive glare disk at ≥ 0.75. Camera-only stress; lidar invariant.
 - `--weather <preset>` — clear/overcast/fog/rain/snow/sunglare. **Render
@@ -143,6 +147,33 @@ re-run `prepare_wildseed_world.sh`.
 - **Bundle right after generating.** `wildseed scenario/terraingen` overwrite
   `models/ground`; a world bundled against a *newer* terrain mesh gets wrong
   spawn heights and mismatched ground.
+- **Bundles must be REAL copies (fixed 2026-07-09).** The bundler's original
+  `cp -al` hardlink snapshot silently mutated every earlier bundle on the next
+  generation — WildSeed rewrites `models/ground/mesh/*` and the recoloured
+  `_dr` variant textures **in place** (same inode). Caught by a checksum
+  guard; `prepare_wildseed_world.sh` now does `cp -a` (~4 GB/bundle). Bundles
+  made before the fix (`wildseed_42`, `vio_lio_bare`, `vio_lio_recipe`,
+  `wildseed_forest`) carry a foreign terrain mesh and must be regenerated
+  from their seeds before any reuse.
+- **`--profile vio_lio` worlds are not ground-drivable as generated.** The
+  recipe steers scatter *into* the corridor band (it was designed for
+  WildSeed's flying rig at z = 2 m) and the multi-metre `rock_moss_set`
+  assets have 4–10 m collision reach at recipe scales — the Husky spawns
+  wedged under a set rock. Signature: wheel odometry integrates while the gz
+  pose is frozen; base_link floats ~0.22 m above the terrain (proper standing
+  clearance on flat ground is ~0.13 m). Diagnose by *looking at a camera
+  frame first*. Remedy: `scripts/clear_drive_lane.py --arc 0.5,0.1,45,2.5` —
+  removes the includes whose collision footprint (GLB bounds × scale)
+  intersects the actual demo arc (a 5 m-radius circle — a straight lane
+  misses its upper half), identically for A/B pairs, and records the removals
+  in `provenance.json`. Proper fix belongs upstream in WildSeed
+  (footprint-aware corridor keep-out).
+- **Restart OpenVINS *and* KISS-ICP fresh after the steady-RTF gate.** "Static
+  init waits for the jerk" is false on heavy worlds: an OpenVINS that comes up
+  during the slow-load transient wedges and stays silent through a 30 sim-s
+  post-jerk window (measured at stack-up RTF 0.30). `m4_lio_eval.sh` restarts
+  both frontends at the gate; expect the m3-smoke VIO check to false-FAIL on
+  heavy worlds for the same reason (its camera/stereo checks remain valid).
 - **Terrain slope is capped at generation (WildSeed ≥ `f1abe58`).** Scenario
   worlds rescale relief to a mean surface slope of 20° (`--max-slope`, 0 =
   off): older alpine seeds drew amplitude ≈ feature wavelength → mean mesh

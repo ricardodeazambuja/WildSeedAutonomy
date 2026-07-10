@@ -1,0 +1,4 @@
+trajectory,ate_rmse,ate_mean,ate_max,rpe_rmse,rpe_mean
+kiss_raw,2.153185,1.981957,3.744111,0.149634,0.116245
+ego_localizer,2.261266,2.039265,4.199766,0.170017,0.121658
+openvins_raw,0.284778,0.229152,0.642014,0.022038,0.014744

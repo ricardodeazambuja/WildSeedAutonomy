@@ -73,16 +73,18 @@ mkdir -p "$BDIR/models"
 
 # 1. snapshot ONLY the model categories the world references (same instant as
 #    the world — `wildseed scenario` overwrites models/ground per run), and
-#    never the flying sensor_rig (the Husky is the robot here). Hardlink when
-#    source and bundle share a filesystem (models are ~1 GB); silent fallback
-#    to a real copy otherwise.
+#    never the flying sensor_rig (the Husky is the robot here). REAL copy, not
+#    hardlinks: `wildseed scenario` rewrites models/ground/mesh/* and the
+#    recoloured _dr variant textures IN PLACE (same inode), so a hardlinked
+#    bundle silently mutates on the next generation (caught 2026-07-09 by a
+#    checksum guard: every earlier bundle's terrain.obj had become the newest
+#    world's mesh). ~1 GB/bundle is the price of immutability.
 CATS="$(grep -o 'model://[^<"]*' "$WORLD_FILE" | cut -d/ -f3 | sort -u | grep -v '^sensor_rig$')"
 echo "   models/  <- $WILDSEED/models  [$(echo $CATS | tr '\n' ' ')]"
 for cat in $CATS; do
   [ -d "$WILDSEED/models/$cat" ] || { echo "world references model://$cat but $WILDSEED/models/$cat is missing" >&2; exit 1; }
   rm -rf "$BDIR/models/$cat"
-  cp -al "$WILDSEED/models/$cat" "$BDIR/models/$cat" 2>/dev/null \
-    || cp -a "$WILDSEED/models/$cat" "$BDIR/models/$cat"
+  cp -a "$WILDSEED/models/$cat" "$BDIR/models/$cat"
 done
 
 # 2. copy world; drop any sensor_rig include (worlds built with --rig carry

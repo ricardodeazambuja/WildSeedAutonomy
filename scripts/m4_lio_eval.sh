@@ -57,8 +57,14 @@ PYEOF' 2>/dev/null | tail -1)
   sleep 5
 done
 
-echo "== restarting kissicp FRESH (its local map must not include load-transient scans) =="
+echo "== restarting kissicp + openvins FRESH (nothing may carry load-transient state) =="
+# kissicp: its local map is built from scan #1 and never resets (M4 lesson).
+# openvins: "static init waits for the jerk" turned out to be false on heavy
+# WildSeed worlds — if it comes up during the slow-load transient its init
+# state machine wedges and /odomimu stays silent through the demo's 30 sim-s
+# window (measured S1 2026-07-09, RTF 0.30 at stack-up; fine at 0.81).
 docker restart sensing-node-kissicp-1
+docker restart sensing-node-openvins-1 2>/dev/null || true
 sleep 3
 
 echo "== starting ego_localizer (lidar config) =="
@@ -70,17 +76,37 @@ docker exec -d sensing-node-fusion-1 bash -lc \
 sleep 5
 docker exec sensing-node-fusion-1 bash -lc 'head -5 /tmp/ego.log || true'
 
+# Optional (CORNER_LOG=1): log KLT corner counts along the drive — texture is
+# a ROUTE property (the M4 alpine divergence came from mid-drive starvation a
+# spawn-point gate missed), so S1's texture A/B records the mechanism too.
+if [ "${CORNER_LOG:-0}" = 1 ]; then
+  echo "== starting corner logger (${PREFIX}_corners.csv) =="
+  docker cp scripts/s1_corner_log.py sensing-node-fusion-1:/tmp/s1_corner_log.py
+  docker exec -d sensing-node-fusion-1 bash -lc \
+    'source /opt/ros/jazzy/setup.bash && python3 /tmp/s1_corner_log.py '"$PREFIX"'_corners.csv > /tmp/corner_log.log 2>&1'
+fi
+
 echo "== demo drive (same params as the M3 chart) =="
 docker cp scripts/m4_lio_demo.py sensing-node-fusion-1:/tmp/m4_lio_demo.py
 docker exec sensing-node-fusion-1 bash -lc \
   'source /opt/ros/jazzy/setup.bash && python3 /tmp/m4_lio_demo.py '"$PREFIX"' 0.5 0.1 45'
 
+if [ "${CORNER_LOG:-0}" = 1 ]; then
+  docker exec sensing-node-fusion-1 bash -lc 'pkill -f s1_corner_log' || true
+fi
+
 echo "== eval chart =="
+# openvins_raw only when the demo recorded /odomimu — a VIO that never
+# initialised (e.g. texture-starved init, an S1 outcome) must not kill the
+# LIO/fused metrics with a FileNotFoundError.
+EST_ARGS="--est kiss_raw:${PREFIX}_kiss.csv --est ego_localizer:${PREFIX}_ego.csv"
+if docker exec sensing-node-fusion-1 test -f "${PREFIX}_ov.csv"; then
+  EST_ARGS="$EST_ARGS --est openvins_raw:${PREFIX}_ov.csv"
+else
+  echo "   (no ${PREFIX}_ov.csv — VIO never published; scoring LIO/fused only)"
+fi
 docker exec sensing-node-fusion-1 bash -lc \
   'source /opt/ros/jazzy/setup.bash && PYTHONPATH=/ros2_ws/src/eval_tools python3 -m eval_tools.evaluate \
-   --gt '"$PREFIX"'_gt.csv \
-   --est kiss_raw:'"$PREFIX"'_kiss.csv \
-   --est openvins_raw:'"$PREFIX"'_ov.csv \
-   --est ego_localizer:'"$PREFIX"'_ego.csv \
+   --gt '"$PREFIX"'_gt.csv '"$EST_ARGS"' \
    --out '"$PREFIX"'_lio.png'
 echo "== DONE =="

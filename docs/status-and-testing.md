@@ -542,6 +542,50 @@ choice: hand-rolled EKF as the live spine, GTSAM as the comparison branch.
 an overconfident measurement sigma — feed a biased odometry at an honest σ or
 you measure your modeling error, not the backend.
 
+**S1 — ground-texture A/B at fixed geometry (2026-07-09,
+`results/s1_texture_ab.png`): a controlled negative, read right.** Six
+bundles (seeds {42, 101, 107} × `--texture {0.0, 1.0}`, WildSeed `c472085`,
+format 4; same seed ⇒ same layout/route, only the ground compositor changes),
+each `m4_lio_eval.sh` drive 21.6–23.4 m. **The dial alone does NOT degrade
+stereo VIO at the UGV viewpoint**: VIO ATE 0.064/0.109/0.064 m (uniform) vs
+0.059/0.285/0.124 m (patchy) — differences within run noise, patchy sometimes
+*worse*; VIO RPE 0.009–0.022 m throughout; LIO flat as designed. Mechanism
+instrumented, not assumed (`s1_corner_log.py`, logged along every drive):
+Shi-Tomasi corners stay plentiful on BOTH variants (~174/frame mean) *and*
+KLT forward-backward survival stays high (uniform 0.91–0.94 vs patchy
+0.94–0.96) — with corridor scatter in the forward stereo view, the ground
+compositor is a minor part of the feature diet. Sharpens the M4 headline: the
+alpine divergence needed **route-wide** starvation (sparse 3D scatter AND
+weak ground); ground texture alone doesn't reproduce it. Landmark *density*
+along the route is the lever that should (S5 `--biome-file`, or the S2
+photometric axis which attacks the camera directly).
+Three walls, all now encoded in tooling (details `wildseed-worlds.md` +
+scripts):
+1. **Hardlinked bundles were a time bomb** — `wildseed scenario` rewrites
+   `models/ground/*` and recoloured `_dr` textures in place (same inode), so
+   every pre-S1 bundle's terrain silently mutated on the next generation.
+   `prepare_wildseed_world.sh` now real-copies (~4 GB/bundle); the four old
+   bundles (`wildseed_42`, `vio_lio_bare/recipe`, `wildseed_forest`) need
+   regeneration from their seeds before any reuse (their published metrics
+   predate the corruption and stand).
+2. **`--profile vio_lio` worlds are not ground-drivable as generated** — the
+   recipe steers scatter *into* the corridor (it was built for WildSeed's
+   flying rig) and the newer multi-metre `rock_moss_set` assets (4–10 m
+   collision reach) seal the lane; the Husky spawns wedged (wheels spin,
+   gz pose frozen, base floating ~0.22 m above terrain). Diagnosis: LOOK at a
+   camera frame first. Remedy: `scripts/clear_drive_lane.py` — footprint-aware
+   (GLB bounds × scale) include removal along the *actual demo arc* (a 5 m
+   circle, not a straight strip — seed 107 stopped at 8 m of 22.5 until the
+   arc mode), identical for A/B pairs, recorded in `provenance.json`.
+   Upstream fix (flagged): footprint-aware corridor keep-out in WildSeed.
+3. **"OpenVINS static init is jerk-safe" is false on heavy worlds** — if the
+   container comes up during the slow-load transient its init wedges and
+   `/odomimu` stays silent through the demo's 30 sim-s window (measured at
+   stack-up RTF 0.30; the m3-smoke VIO check false-FAILs the same way while
+   its camera/stereo checks stay valid). `m4_lio_eval.sh` now restarts
+   **openvins together with kissicp** after the steady-RTF gate — nothing may
+   carry load-transient state.
+
 ## 5. Next steps — where the loop stops being laptop-closable
 
 **The laptop-closable arc is closed (§4): M4 sim-first, the keystone on
